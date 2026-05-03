@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 import asyncio
 
 from src.utils.database import DatabaseManager
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.logging_setup import get_trading_logger
 from src.config.settings import settings
 
@@ -54,9 +54,9 @@ class CashReservesManager:
     maintain operational flexibility for opportunistic trades.
     """
     
-    def __init__(self, db_manager: DatabaseManager, kalshi_client: KalshiClient):
+    def __init__(self, db_manager: DatabaseManager, polymarket_client: PolymarketClient):
         self.db_manager = db_manager
-        self.kalshi_client = kalshi_client
+        self.polymarket_client = polymarket_client
         self.logger = get_trading_logger("cash_reserves")
         
         # UPDATED: Minimal cash reserve requirements for maximum deployment
@@ -279,37 +279,39 @@ class CashReservesManager:
             return {'status': 'ERROR', 'message': str(e)}
     
     async def _get_portfolio_value(self) -> float:
-        """Calculate total portfolio value (cash + positions)."""
+        """Calculate total portfolio value (USDC cash + MTM on open positions)."""
         try:
-            # Get available cash
-            balance_response = await self.kalshi_client.get_balance()
-            available_cash = balance_response.get('balance', 0) / 100
-            
-            # Get current positions value
-            positions_response = await self.kalshi_client.get_positions()
-            positions = positions_response.get('positions', []) if isinstance(positions_response, dict) else []
-            total_position_value = 0
-            
+            balance_response = await self.polymarket_client.get_balance()
+            available_cash = float(balance_response.get('balance_dollars', 0))
+
+            positions_response = await self.polymarket_client.get_positions()
+            # Adapter returns {market_positions: [...]} — NOT 'positions' (was a
+            # pre-existing bug in the Polymarket version that silently zeroed this).
+            positions = positions_response.get('market_positions', []) if isinstance(positions_response, dict) else []
+            total_position_value = 0.0
+
             for position in positions:
                 if not isinstance(position, dict):
                     continue
-                quantity = position.get('quantity', 0)
-                if quantity != 0:
-                    # Estimate position value (could be improved with real-time pricing)
-                    position_value = abs(quantity) * 0.50  # Conservative estimate
-                    total_position_value += position_value
-            
+                size = float(position.get('size', 0) or 0)
+                if size <= 0:
+                    continue
+                cur_price = float(position.get('current_price', 0) or 0)
+                if cur_price <= 0:
+                    cur_price = float(position.get('avg_price', 0.5) or 0.5)
+                total_position_value += size * cur_price
+
             return available_cash + total_position_value
-            
+
         except Exception as e:
             self.logger.error(f"Error calculating portfolio value: {e}")
-            return 100.0  # Conservative fallback
-    
+            return 100.0
+
     async def _get_available_cash(self) -> float:
-        """Get available cash balance."""
+        """Get available USDC.e balance for the funding wallet."""
         try:
-            balance_response = await self.kalshi_client.get_balance()
-            return balance_response.get('balance', 0) / 100
+            balance_response = await self.polymarket_client.get_balance()
+            return float(balance_response.get('balance_dollars', 0))
         except Exception as e:
             self.logger.error(f"Error getting available cash: {e}")
             return 0.0
@@ -342,29 +344,29 @@ class CashReservesManager:
 async def check_can_trade_with_cash_reserves(
     trade_value: float,
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient
+    polymarket_client: PolymarketClient
 ) -> Tuple[bool, str]:
     """Simple check if a trade can be made within cash reserve requirements."""
-    manager = CashReservesManager(db_manager, kalshi_client)
+    manager = CashReservesManager(db_manager, polymarket_client)
     result = await manager.check_cash_reserves(trade_value)
     return result.can_trade, result.reason
 
 
 async def get_max_trade_size_for_reserves(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient
+    polymarket_client: PolymarketClient
 ) -> float:
     """Get maximum trade size that maintains cash reserves."""
-    manager = CashReservesManager(db_manager, kalshi_client)
+    manager = CashReservesManager(db_manager, polymarket_client)
     status = await manager.get_cash_status()
     return status.get('max_trade_size', 0.0)
 
 
 async def is_cash_emergency(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient
+    polymarket_client: PolymarketClient
 ) -> bool:
     """Check if we're in a cash emergency situation."""
-    manager = CashReservesManager(db_manager, kalshi_client)
+    manager = CashReservesManager(db_manager, polymarket_client)
     status = await manager.get_cash_status()
     return status.get('emergency_status', False) 

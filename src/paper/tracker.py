@@ -110,7 +110,7 @@ def settle_signal(signal_id: int, settlement_price: float):
     """
     Mark a signal as settled.
     For NO side: profit = entry_price - settlement_price  (you bought NO at entry_price)
-    Actually on Kalshi: buying NO at price p means you pay p, and receive $1 if NO wins.
+    Actually on Polymarket: buying NO at price p means you pay p, and receive $1 if NO wins.
     So PnL = (1 - entry_price) if NO wins, else -entry_price.
     """
     conn = get_connection()

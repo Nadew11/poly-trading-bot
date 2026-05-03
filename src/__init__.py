@@ -1,2 +1,2 @@
-# Kalshi Trading System
+# Polymarket Trading System
 __version__ = "1.0.0" 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kalshi AI Trading Bot - Setup and Environment Checker
+Polymarket AI Trading Bot - Setup and Environment Checker
 
 This script helps users set up the bot correctly and diagnose common issues.
 """
@@ -169,12 +169,12 @@ def create_venv_if_needed():
 
 def main():
     """Main setup function."""
-    print_header("Kalshi AI Trading Bot Setup")
+    print_header("Polymarket AI Trading Bot Setup")
     
     # Check if we're in the right directory
     if not Path("beast_mode_dashboard.py").exists():
         print("❌ beast_mode_dashboard.py not found.")
-        print("   Make sure you're running this from the kalshi-ai-trading-bot directory.")
+        print("   Make sure you're running this from the polymarket-ai-trading-bot directory.")
         return False
     
     print_step(1, "Checking Python Version")

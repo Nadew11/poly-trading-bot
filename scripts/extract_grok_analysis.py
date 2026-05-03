@@ -5,7 +5,6 @@ import sys
 sys.path.append('.')
 
 from src.clients.xai_client import XAIClient
-from xai_sdk.chat import user as xai_user
 
 async def extract_analysis():
     """Extract the raw Grok4 analysis without JSON parsing."""
@@ -13,7 +12,7 @@ async def extract_analysis():
     xai_client = XAIClient()
     
     analysis_prompt = """
-You are an expert quantitative trading analyst. Based on our Kalshi trading system state:
+You are an expert quantitative trading analyst. Based on our Polymarket trading system state:
 
 **CURRENT PORTFOLIO:**
 - 16 active positions with high capital utilization (~91%)
@@ -28,7 +27,7 @@ You are an expert quantitative trading analyst. Based on our Kalshi trading syst
 - Need to distinguish between manual success and automated performance
 
 **ANALYSIS REQUEST:**
-Provide actionable performance insights and improvement recommendations for this Kalshi prediction market trading system. Focus on:
+Provide actionable performance insights and improvement recommendations for this Polymarket prediction markets trading system. Focus on:
 
 1. Capital management optimization
 2. Position sizing strategy 

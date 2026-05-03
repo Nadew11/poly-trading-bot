@@ -1,5 +1,5 @@
 """
-Database manager for the Kalshi trading system.
+Database manager for the Polymarket trading system.
 """
 
 import aiosqlite

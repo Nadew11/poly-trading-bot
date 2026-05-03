@@ -8,7 +8,7 @@ from src.jobs.execute import execute_position
 from src.jobs.ingest import run_ingestion
 from src.utils.database import DatabaseManager, Market
 from src.clients.xai_client import XAIClient
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.config.settings import settings
 from tests.test_helpers import find_suitable_test_market
 
@@ -20,13 +20,13 @@ E2E_TEST_DB = "e2e_test_trading_system.db"
 async def test_full_trading_cycle():
     """
     Test the complete trading cycle: ingest -> decide -> execute.
-    Uses real Kalshi API and XAI client - OPTIMIZED to reduce API calls.
+    Uses real Polymarket CLOB and XAI client - OPTIMIZED to reduce API calls.
     """
     # Initialize real clients - no mocking
     db_manager = DatabaseManager(db_path=E2E_TEST_DB)
     await db_manager.initialize()
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     xai_client = XAIClient()
     
     try:
@@ -45,7 +45,7 @@ async def test_full_trading_cycle():
         # Step 2: Decision making with real AI
         print("🤖 Testing decision making process...")
         position = await make_decision_for_market(
-            test_market, db_manager, xai_client, kalshi_client
+            test_market, db_manager, xai_client, polymarket_client
         )
         
         if position:
@@ -53,7 +53,7 @@ async def test_full_trading_cycle():
             
             # Step 3: Execute position (this creates the position in database)
             print("🚀 Testing position execution...")
-            execution_result = await execute_position(position, kalshi_client)
+            execution_result = await execute_position(position, polymarket_client)
             
             if execution_result:
                 print(f"✅ Position executed successfully")
@@ -73,7 +73,7 @@ async def test_full_trading_cycle():
         print("✅ End-to-end test completed successfully")
         
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
         await xai_client.close()
         # Clean up test database
         if os.path.exists(E2E_TEST_DB):

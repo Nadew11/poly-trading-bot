@@ -1,5 +1,5 @@
 """
-Configuration settings for the Kalshi trading system.
+Configuration settings for the Polymarket trading system.
 Manages trading parameters, API configurations, and risk management settings.
 """
 
@@ -15,14 +15,22 @@ load_dotenv()
 @dataclass
 class APIConfig:
     """API configuration settings."""
-    kalshi_api_key: str = field(default_factory=lambda: os.getenv("KALSHI_API_KEY", ""))
-    kalshi_base_url: str = "https://api.elections.kalshi.com"  # Updated to new API endpoint
+    # --- Polymarket (active exchange) ---
+    polymarket_private_key: str = field(default_factory=lambda: os.getenv("POLYMARKET_PRIVATE_KEY", ""))
+    polymarket_funder: str = field(default_factory=lambda: os.getenv("POLYMARKET_FUNDER", ""))
+    polymarket_host: str = field(default_factory=lambda: os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com"))
+    polymarket_chain_id: int = field(default_factory=lambda: int(os.getenv("POLYMARKET_CHAIN_ID", "137")))
+    polymarket_signature_type: int = field(default_factory=lambda: int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "0")))
+    polymarket_gamma_host: str = field(default_factory=lambda: os.getenv("POLYMARKET_GAMMA_HOST", "https://gamma-api.polymarket.com"))
+    polygon_rpc_url: str = field(default_factory=lambda: os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com"))
+
+    # --- LLM ---
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     openrouter_api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
     openai_base_url: str = "https://api.openai.com/v1"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-
-    # xai_api_key removed — all models now route through OpenRouter
+    # All models route through OpenRouter — there is no direct xAI/OpenAI key
+    # path in the live trading code today.
 
 
 @dataclass
@@ -178,7 +186,7 @@ arbitrage_allocation: float = 0.10      # 10% for arbitrage opportunities
 
   # === PORTFOLIO OPTIMIZATION SETTINGS ===
 # Kelly Criterion is now the PRIMARY position sizing method (moved to TradingConfig)
-# total_capital: DYNAMICALLY FETCHED from Kalshi balance - never hardcoded!
+# total_capital: DYNAMICALLY FETCHED from USDC.e wallet balance — never hardcoded!
 use_risk_parity: bool = True            # Equal risk allocation vs equal capital
 rebalance_hours: int = 6                # Rebalance portfolio every 6 hours
 min_position_size: float = 5.0          # Minimum position size ($5 vs $10)
@@ -261,9 +269,19 @@ class Settings:
     sentiment: SentimentConfig = field(default_factory=SentimentConfig)
 
     def validate(self) -> bool:
-        """Validate configuration settings."""
-        if not self.api.kalshi_api_key:
-            raise ValueError("KALSHI_API_KEY environment variable is required")
+        """Validate configuration settings.
+
+        Polymarket auth is checked here as a soft warning rather than a hard
+        failure: importing this module must succeed even on a fresh clone
+        without .env so that `python cli.py health` itself can run and report
+        what's missing.
+        """
+        if not self.api.polymarket_private_key:
+            raise ValueError(
+                "POLYMARKET_PRIVATE_KEY environment variable is required "
+                "(see env.template; copy to .env and fill in your Polygon "
+                "wallet's private key)"
+            )
 
         if self.trading.max_position_size_pct <= 0 or self.trading.max_position_size_pct > 100:
             raise ValueError("max_position_size_pct must be between 0 and 100")

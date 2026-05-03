@@ -1,5 +1,5 @@
 """
-Event system for the Kalshi AI Trading Bot.
+Event system for the Polymarket AI Trading Bot.
 Provides async publish/subscribe event bus for real-time data distribution.
 """
 

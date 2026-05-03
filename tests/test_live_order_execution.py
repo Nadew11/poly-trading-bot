@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test Immediate Trading Fix
-Verify our fix for immediate trading actually places real orders on Kalshi.
+Verify our fix for immediate trading actually places real orders on Polymarket.
 """
 
 import asyncio
@@ -13,7 +13,7 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Market
 from src.utils.logging_setup import setup_logging
@@ -28,16 +28,16 @@ async def test_immediate_trading_fix():
     logger.info("🎯 Testing Immediate Trading Fix")
     
     # Initialize clients
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     xai_client = XAIClient()
     db_manager = DatabaseManager()
     
     try:
         await db_manager.initialize()
         
-        # 1. Check initial Kalshi positions
-        logger.info("📊 Checking initial Kalshi positions...")
-        initial_positions = await kalshi_client.get_positions()
+        # 1. Check initial Polymarket positions
+        logger.info("📊 Checking initial Polymarket positions...")
+        initial_positions = await polymarket_client.get_positions()
         initial_markets = {pos['ticker']: pos['position'] for pos in initial_positions.get('market_positions', [])}
         logger.info(f"Initial positions in {len(initial_markets)} markets")
         
@@ -45,7 +45,7 @@ async def test_immediate_trading_fix():
         logger.info("🔍 Finding TRADEABLE markets (not just any markets)...")
         
         # Get markets with more specific criteria for active trading
-        markets_response = await kalshi_client.get_markets(
+        markets_response = await polymarket_client.get_markets(
             limit=200,  # Get more markets to find tradeable ones
             status="open"  # Only get open markets
         )
@@ -108,7 +108,7 @@ async def test_immediate_trading_fix():
         # 4. Test immediate trading by creating opportunities
         logger.info("🚀 Testing immediate trading opportunity creation...")
         opportunities = await create_market_opportunities_from_markets(
-            [market], xai_client, kalshi_client, db_manager, 1000  # $1000 test capital
+            [market], xai_client, polymarket_client, db_manager, 1000  # $1000 test capital
         )
         
         logger.info(f"Created {len(opportunities)} opportunities")
@@ -135,9 +135,9 @@ async def test_immediate_trading_fix():
         else:
             logger.info(f"⚠️ No positions found in database for {ticker}")
         
-        # 7. Check Kalshi for new positions  
-        logger.info("📊 Checking Kalshi for new positions...")
-        final_positions = await kalshi_client.get_positions()
+        # 7. Check Polymarket for new positions  
+        logger.info("📊 Checking Polymarket for new positions...")
+        final_positions = await polymarket_client.get_positions()
         final_markets = {pos['ticker']: pos['position'] for pos in final_positions.get('market_positions', [])}
         
         # Check if our test market has a position now
@@ -148,11 +148,11 @@ async def test_immediate_trading_fix():
             logger.info(f"✅ SUCCESS! New position in {ticker}: {new_position} contracts (was {initial_position})")
             return True
         else:
-            logger.error(f"❌ NO position change in {ticker} on Kalshi (still {initial_position})")
+            logger.error(f"❌ NO position change in {ticker} on Polymarket (still {initial_position})")
             
-            # If database has position but Kalshi doesn't, it means our execution failed
+            # If database has position but Polymarket doesn't, it means our execution failed
             if db_positions:
-                logger.error("🚨 CRITICAL: Database has position but Kalshi doesn't - orders not actually placed!")
+                logger.error("🚨 CRITICAL: Database has position but Polymarket doesn't - orders not actually placed!")
             
             return False
         
@@ -163,7 +163,7 @@ async def test_immediate_trading_fix():
         return False
     
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
 
 if __name__ == "__main__":
     result = asyncio.run(test_immediate_trading_fix())

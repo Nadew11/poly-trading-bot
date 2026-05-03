@@ -4,8 +4,9 @@
 .env.production
 .env.staging
 *.key
-kalshi_private_key
 secrets.json
+# Polymarket-related local artifacts
+data/token_cache.json
 config.json
 
 # Database files

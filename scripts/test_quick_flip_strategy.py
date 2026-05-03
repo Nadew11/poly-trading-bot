@@ -18,7 +18,7 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager
 from src.utils.logging_setup import setup_logging
@@ -38,7 +38,7 @@ async def test_quick_flip_opportunities():
     logger.info("🎯 Testing Quick Flip Strategy - Opportunity Identification")
     
     # Initialize clients
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     db_manager = DatabaseManager()
     await db_manager.initialize()
     xai_client = XAIClient(db_manager=db_manager)  # Pass db_manager for LLM logging
@@ -57,7 +57,7 @@ async def test_quick_flip_opportunities():
         )
         
         strategy = QuickFlipScalpingStrategy(
-            db_manager, kalshi_client, xai_client, config
+            db_manager, polymarket_client, xai_client, config
         )
         
         # Get some markets to analyze
@@ -112,7 +112,7 @@ async def test_quick_flip_full_strategy():
     logger.info("🚀 Testing Full Quick Flip Strategy - PAPER MODE")
     
     # Initialize clients
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     db_manager = DatabaseManager()
     await db_manager.initialize()
     xai_client = XAIClient(db_manager=db_manager)  # Pass db_manager for LLM logging
@@ -140,7 +140,7 @@ async def test_quick_flip_full_strategy():
         # Run the strategy
         results = await run_quick_flip_strategy(
             db_manager=db_manager,
-            kalshi_client=kalshi_client,
+            polymarket_client=polymarket_client,
             xai_client=xai_client,
             available_capital=100.0,  # $100 test capital
             config=config

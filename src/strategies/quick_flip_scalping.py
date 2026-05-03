@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import numpy as np
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Market, Position
 from src.config.settings import settings
@@ -65,12 +65,12 @@ class QuickFlipScalpingStrategy:
     def __init__(
         self,
         db_manager: DatabaseManager,
-        kalshi_client: KalshiClient, 
+        polymarket_client: PolymarketClient, 
         xai_client: XAIClient,
         config: Optional[QuickFlipConfig] = None
     ):
         self.db_manager = db_manager
-        self.kalshi_client = kalshi_client
+        self.polymarket_client = polymarket_client
         self.xai_client = xai_client
         self.config = config or QuickFlipConfig()
         self.logger = get_trading_logger("quick_flip_scalping")
@@ -100,7 +100,7 @@ class QuickFlipScalpingStrategy:
         for market in markets:
             try:
                 # Get current market data
-                market_data = await self.kalshi_client.get_market(market.market_id)
+                market_data = await self.polymarket_client.get_market(market.market_id)
                 if not market_data:
                     continue
                 
@@ -370,7 +370,7 @@ REASON: [brief explanation]
                 position=position,
                 live_mode=live_mode,
                 db_manager=self.db_manager,
-                kalshi_client=self.kalshi_client
+                polymarket_client=self.polymarket_client
             )
             
             if success:
@@ -405,7 +405,7 @@ REASON: [brief explanation]
                 position=position,
                 limit_price=sell_price,
                 db_manager=self.db_manager,
-                kalshi_client=self.kalshi_client
+                polymarket_client=self.polymarket_client
             )
             
             if success:
@@ -499,7 +499,7 @@ REASON: [brief explanation]
             live_mode = getattr(settings.trading, 'live_trading_enabled', False)
             
             if live_mode:
-                response = await self.kalshi_client.place_order(**order_params)
+                response = await self.polymarket_client.place_order(**order_params)
                 
                 if response and 'order' in response:
                     self.logger.info(
@@ -524,7 +524,7 @@ REASON: [brief explanation]
 
 async def run_quick_flip_strategy(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient,
+    polymarket_client: PolymarketClient,
     xai_client: XAIClient,
     available_capital: float,
     config: Optional[QuickFlipConfig] = None
@@ -539,7 +539,7 @@ async def run_quick_flip_strategy(
         
         # Initialize strategy
         strategy = QuickFlipScalpingStrategy(
-            db_manager, kalshi_client, xai_client, config
+            db_manager, polymarket_client, xai_client, config
         )
         
         # Get available markets

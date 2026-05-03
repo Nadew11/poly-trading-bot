@@ -3,7 +3,7 @@
 import asyncio
 import sys
 sys.path.append('.')
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.database import DatabaseManager
 from src.clients.xai_client import XAIClient
 from src.utils.market_prices import get_market_prices
@@ -13,10 +13,10 @@ from datetime import datetime, timedelta
 async def comprehensive_analysis():
     """Comprehensive analysis of trading performance and system state."""
     
-    print("🎯 KALSHI TRADING SYSTEM PERFORMANCE ANALYSIS")
+    print("🎯 POLYMARKET TRADING SYSTEM PERFORMANCE ANALYSIS")
     print("=" * 60)
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     db = DatabaseManager()
     await db.initialize()
     
@@ -25,14 +25,14 @@ async def comprehensive_analysis():
         print("\n📊 CURRENT POSITIONS ANALYSIS")
         print("-" * 40)
         
-        # Kalshi actual positions
-        positions_response = await kalshi_client.get_positions()
-        kalshi_positions = positions_response.get('market_positions', [])
+        # Polymarket actual positions
+        positions_response = await polymarket_client.get_positions()
+        polymarket_positions = positions_response.get('market_positions', [])
         
-        non_zero_positions = [p for p in kalshi_positions if p.get('position', 0) != 0]
+        non_zero_positions = [p for p in polymarket_positions if p.get('position', 0) != 0]
         total_contracts = sum(abs(p.get('position', 0)) for p in non_zero_positions)
         
-        print(f"✅ Active Kalshi Positions: {len(non_zero_positions)} markets")
+        print(f"✅ Active Polymarket Positions: {len(non_zero_positions)} markets")
         print(f"📈 Total Contracts Held: {total_contracts}")
         
         if non_zero_positions:
@@ -76,19 +76,19 @@ async def comprehensive_analysis():
         print(f"\n💰 CAPITAL ANALYSIS")
         print("-" * 40)
         
-        balance_response = await kalshi_client.get_balance()
+        balance_response = await polymarket_client.get_balance()
         available_cash = balance_response.get('balance', 0) / 100
         
         print(f"Available Cash: ${available_cash:.2f}")
         
-        # Calculate total position value from Kalshi
+        # Calculate total position value from Polymarket
         total_position_value = 0
-        for pos in kalshi_positions:
+        for pos in polymarket_positions:
             quantity = pos.get('position', 0)
             if quantity != 0:
                 ticker = pos.get('ticker')
                 try:
-                    market_data = await kalshi_client.get_market(ticker)
+                    market_data = await polymarket_client.get_market(ticker)
                     market_info = market_data.get('market', {})
                     yes_bid, yes_ask, no_bid, no_ask = get_market_prices(market_info)
                     if quantity > 0:  # Long position
@@ -140,19 +140,19 @@ async def comprehensive_analysis():
         discrepancies = 0
         for db_pos in open_positions:
             market_id, side, quantity, entry_price, live = db_pos
-            # Find corresponding Kalshi position
-            kalshi_pos = next((p for p in kalshi_positions if p.get('ticker') == market_id), None)
+            # Find corresponding Polymarket position
+            polymarket_pos = next((p for p in polymarket_positions if p.get('ticker') == market_id), None)
             
-            if kalshi_pos:
-                kalshi_quantity = kalshi_pos.get('position', 0)
+            if polymarket_pos:
+                polymarket_quantity = polymarket_pos.get('position', 0)
                 expected_quantity = quantity if side == "YES" else -quantity
                 
-                if kalshi_quantity != expected_quantity:
+                if polymarket_quantity != expected_quantity:
                     discrepancies += 1
-                    print(f"⚠️  {market_id}: DB={expected_quantity}, Kalshi={kalshi_quantity}")
+                    print(f"⚠️  {market_id}: DB={expected_quantity}, Polymarket={polymarket_quantity}")
         
         if discrepancies == 0:
-            print("✅ All database positions match Kalshi positions")
+            print("✅ All database positions match Polymarket positions")
         else:
             print(f"❌ Found {discrepancies} position discrepancies")
         
@@ -187,7 +187,7 @@ async def comprehensive_analysis():
             print("📊 Win rate data not available yet")
             
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
 
 if __name__ == "__main__":
     asyncio.run(comprehensive_analysis())

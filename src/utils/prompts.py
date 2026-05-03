@@ -3,7 +3,7 @@ Prompt templates for the LLM decision engine.
 """
 
 MULTI_AGENT_PROMPT_TPL = """
-You are a team of expert Kalshi prediction traders:
+You are a team of expert Polymarket prediction traders:
 
 1. **Forecaster** – Estimate the true YES probability using market data + news.
 2. **Critic** – Point out flaws, biases, or missing context in the forecast.

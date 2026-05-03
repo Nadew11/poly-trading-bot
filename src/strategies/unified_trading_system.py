@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 import numpy as np
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Market, Position
 from src.config.settings import settings
@@ -124,17 +124,17 @@ class UnifiedAdvancedTradingSystem:
     def __init__(
         self,
         db_manager: DatabaseManager,
-        kalshi_client: KalshiClient,
+        polymarket_client: PolymarketClient,
         xai_client: XAIClient,
         config: Optional[TradingSystemConfig] = None
     ):
         self.db_manager = db_manager
-        self.kalshi_client = kalshi_client
+        self.polymarket_client = polymarket_client
         self.xai_client = xai_client
         self.config = config or TradingSystemConfig()
         self.logger = get_trading_logger("unified_trading_system")
         
-        # 🚨 DYNAMIC CAPITAL: Will be set by async_initialize() from actual Kalshi balance
+        # 🚨 DYNAMIC CAPITAL: Will be set by async_initialize() from actual USDC.e balance
         self.total_capital = 100  # Temporary default, will be updated by async_initialize()
         
         # OLD HARDCODED WAY (REMOVED):
@@ -150,19 +150,19 @@ class UnifiedAdvancedTradingSystem:
     async def async_initialize(self):
         """
         Asynchronously initialize the trading system by fetching the current balance
-        from Kalshi and setting the total capital.
+        from Polymarket and setting the total capital.
         """
         try:
             # Get total portfolio value (cash + current positions)
-            balance_response = await self.kalshi_client.get_balance()
+            balance_response = await self.polymarket_client.get_balance()
             available_cash = balance_response.get('balance', 0) / 100  # Convert cents to dollars
 
             # Get current positions to calculate total portfolio value
-            # Kalshi API v2 returns portfolio_value in balance response (in cents)
+            # Polymarket CLOB v2 returns portfolio_value in balance response (in cents)
             total_position_value = balance_response.get('portfolio_value', 0) / 100  # Convert cents to dollars
 
             # Also log active positions for visibility
-            positions_response = await self.kalshi_client.get_positions()
+            positions_response = await self.polymarket_client.get_positions()
             event_positions = positions_response.get('event_positions', []) if isinstance(positions_response, dict) else []
             active_positions = [p for p in event_positions if float(p.get('event_exposure_dollars', '0')) > 0]
             if active_positions:
@@ -192,8 +192,8 @@ class UnifiedAdvancedTradingSystem:
         self.arbitrage_capital = self.total_capital * self.config.arbitrage_allocation
 
         # Initialize strategy modules with actual capital
-        self.market_maker = AdvancedMarketMaker(self.db_manager, self.kalshi_client, self.xai_client)
-        self.portfolio_optimizer = AdvancedPortfolioOptimizer(self.db_manager, self.kalshi_client, self.xai_client)
+        self.market_maker = AdvancedMarketMaker(self.db_manager, self.polymarket_client, self.xai_client)
+        self.portfolio_optimizer = AdvancedPortfolioOptimizer(self.db_manager, self.polymarket_client, self.xai_client)
 
         self.logger.info(f"🎯 CAPITAL ALLOCATION: Market Making=${self.market_making_capital:.2f}, Directional=${self.directional_capital:.2f}, Arbitrage=${self.arbitrage_capital:.2f}")
 
@@ -216,8 +216,8 @@ class UnifiedAdvancedTradingSystem:
             from src.utils.position_limits import PositionLimitsManager
             from src.utils.cash_reserves import CashReservesManager, is_cash_emergency
             
-            limits_manager = PositionLimitsManager(self.db_manager, self.kalshi_client)
-            cash_manager = CashReservesManager(self.db_manager, self.kalshi_client)
+            limits_manager = PositionLimitsManager(self.db_manager, self.polymarket_client)
+            cash_manager = CashReservesManager(self.db_manager, self.polymarket_client)
             
             # Check position limits
             limits_status = await limits_manager.get_position_limits_status()
@@ -331,7 +331,7 @@ class UnifiedAdvancedTradingSystem:
             
             # Convert markets to opportunities (with immediate trading capability)
             opportunities = await create_market_opportunities_from_markets(
-                markets, self.xai_client, self.kalshi_client, 
+                markets, self.xai_client, self.polymarket_client, 
                 self.db_manager, self.directional_capital
             )
             
@@ -429,7 +429,7 @@ class UnifiedAdvancedTradingSystem:
                     from src.utils.position_limits import check_can_add_position
                     
                     can_add_position, limit_reason = await check_can_add_position(
-                        initial_position_value, self.db_manager, self.kalshi_client
+                        initial_position_value, self.db_manager, self.polymarket_client
                     )
                     
                     if not can_add_position:
@@ -440,7 +440,7 @@ class UnifiedAdvancedTradingSystem:
                         for reduction_factor in [0.8, 0.6, 0.4, 0.2, 0.1]:
                             reduced_position_value = initial_position_value * reduction_factor
                             can_add_reduced, reduced_reason = await check_can_add_position(
-                                reduced_position_value, self.db_manager, self.kalshi_client
+                                reduced_position_value, self.db_manager, self.polymarket_client
                             )
                             
                             if can_add_reduced:
@@ -450,7 +450,7 @@ class UnifiedAdvancedTradingSystem:
                         else:
                             # If even the smallest size doesn't fit, check if it's due to position count
                             from src.utils.position_limits import PositionLimitsManager
-                            limits_manager = PositionLimitsManager(self.db_manager, self.kalshi_client)
+                            limits_manager = PositionLimitsManager(self.db_manager, self.polymarket_client)
                             current_positions = await limits_manager._get_position_count()
                             
                             if current_positions >= limits_manager.max_positions:
@@ -469,7 +469,7 @@ class UnifiedAdvancedTradingSystem:
                     from src.utils.cash_reserves import check_can_trade_with_cash_reserves
                     
                     can_trade_reserves, reserves_reason = await check_can_trade_with_cash_reserves(
-                        position_value, self.db_manager, self.kalshi_client
+                        position_value, self.db_manager, self.polymarket_client
                     )
                     
                     if not can_trade_reserves:
@@ -480,7 +480,7 @@ class UnifiedAdvancedTradingSystem:
                     self.logger.info(f"✅ CASH RESERVES OK FOR ALLOCATION: {market_id}")
                     
                     # Get current market data
-                    market_data = await self.kalshi_client.get_market(market_id)
+                    market_data = await self.polymarket_client.get_market(market_id)
                     if not market_data:
                         self.logger.warning(f"Could not get market data for {market_id}")
                         continue
@@ -553,7 +553,7 @@ class UnifiedAdvancedTradingSystem:
                         position=position,
                         live_mode=live_mode,
                         db_manager=self.db_manager,
-                        kalshi_client=self.kalshi_client
+                        polymarket_client=self.polymarket_client
                     )
                     
                     if success:
@@ -583,7 +583,7 @@ class UnifiedAdvancedTradingSystem:
         try:
             # TODO: Implement cross-market arbitrage detection
             # This could include:
-            # - Kalshi vs Polymarket price differences
+            # - Polymarket vs Polymarket price differences
             # - Related market arbitrage (correlated events)
             # - Temporal arbitrage (same event, different expiries)
             
@@ -755,7 +755,7 @@ class UnifiedAdvancedTradingSystem:
 
 async def run_unified_trading_system(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient,
+    polymarket_client: PolymarketClient,
     xai_client: XAIClient,
     config: Optional[TradingSystemConfig] = None
 ) -> TradingSystemResults:
@@ -772,10 +772,10 @@ async def run_unified_trading_system(
         
         # Initialize system
         trading_system = UnifiedAdvancedTradingSystem(
-            db_manager, kalshi_client, xai_client, config
+            db_manager, polymarket_client, xai_client, config
         )
         
-        # 🚨 CRITICAL: Initialize with dynamic balance from Kalshi
+        # 🚨 CRITICAL: Initialize with dynamic balance from Polymarket
         await trading_system.async_initialize()
         
         # Execute unified strategy

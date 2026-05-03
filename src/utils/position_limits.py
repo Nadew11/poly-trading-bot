@@ -20,7 +20,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 from src.utils.database import DatabaseManager, Position
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.logging_setup import get_trading_logger
 from src.config.settings import settings
 
@@ -57,9 +57,9 @@ class PositionLimitsManager:
     excessive risk exposure that contributed to the performance issues.
     """
     
-    def __init__(self, db_manager: DatabaseManager, kalshi_client: KalshiClient):
+    def __init__(self, db_manager: DatabaseManager, polymarket_client: PolymarketClient):
         self.db_manager = db_manager
-        self.kalshi_client = kalshi_client
+        self.polymarket_client = polymarket_client
         self.logger = get_trading_logger("position_limits")
         
         # INCREASED: More aggressive limits for more opportunities
@@ -244,37 +244,47 @@ class PositionLimitsManager:
         return len(positions)
     
     async def _get_portfolio_value(self) -> float:
-        """Calculate total portfolio value (cash + positions)."""
+        """Calculate total portfolio value (cash + mark-to-market on positions).
+
+        Polymarket's data API returns each position with `current_price` already
+        baked in, so we don't need a per-market orderbook fetch like the legacy
+        Polymarket flow did.
+        """
         try:
-            # Get available cash
-            balance_response = await self.kalshi_client.get_balance()
-            available_cash = balance_response.get('balance', 0) / 100
-            
-            # Get current positions value
-            positions_response = await self.kalshi_client.get_positions()
-            positions = positions_response.get('positions', []) if isinstance(positions_response, dict) else []
-            total_position_value = 0
-            
+            balance_response = await self.polymarket_client.get_balance()
+            available_cash = float(balance_response.get('balance_dollars', 0))
+
+            positions_response = await self.polymarket_client.get_positions()
+            # Adapter returns {market_positions: [...]} — NOT 'positions' (was a
+            # pre-existing bug in the Polymarket version that silently disabled this
+            # whole calculation).
+            positions = positions_response.get('market_positions', []) if isinstance(positions_response, dict) else []
+            total_position_value = 0.0
+
             for position in positions:
                 if not isinstance(position, dict):
                     continue
-                quantity = position.get('quantity', 0)
-                if quantity != 0:
-                    # Estimate position value (could be improved with real-time pricing)
-                    position_value = abs(quantity) * 0.50  # Conservative estimate
-                    total_position_value += position_value
-            
+                size = float(position.get('size', 0) or 0)
+                if size <= 0:
+                    continue
+                # Prefer live current_price; fall back to avg_price; finally
+                # to a conservative 0.50 if neither field is populated.
+                cur_price = float(position.get('current_price', 0) or 0)
+                if cur_price <= 0:
+                    cur_price = float(position.get('avg_price', 0.5) or 0.5)
+                total_position_value += size * cur_price
+
             return available_cash + total_position_value
-            
+
         except Exception as e:
             self.logger.error(f"Error calculating portfolio value: {e}")
             return 100.0  # Conservative fallback
     
     async def _get_available_cash(self) -> float:
-        """Get available cash balance."""
+        """Get available USDC.e balance for the funding wallet."""
         try:
-            balance_response = await self.kalshi_client.get_balance()
-            return balance_response.get('balance', 0) / 100
+            balance_response = await self.polymarket_client.get_balance()
+            return float(balance_response.get('balance_dollars', 0))
         except Exception as e:
             self.logger.error(f"Error getting available cash: {e}")
             return 0.0
@@ -393,20 +403,20 @@ class PositionLimitsManager:
 async def check_can_add_position(
     position_size: float,
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient
+    polymarket_client: PolymarketClient
 ) -> Tuple[bool, str]:
     """Simple check if a position can be added."""
-    manager = PositionLimitsManager(db_manager, kalshi_client)
+    manager = PositionLimitsManager(db_manager, polymarket_client)
     result = await manager.check_position_limits(position_size)
     return result.can_trade, result.reason
 
 
 async def enforce_limits_if_needed(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient
+    polymarket_client: PolymarketClient
 ) -> bool:
     """Enforce position limits if needed."""
-    manager = PositionLimitsManager(db_manager, kalshi_client)
+    manager = PositionLimitsManager(db_manager, polymarket_client)
     current_count = await manager._get_position_count()
     
     if current_count > manager.max_positions:
@@ -418,9 +428,9 @@ async def enforce_limits_if_needed(
 
 async def get_max_position_size(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient
+    polymarket_client: PolymarketClient
 ) -> float:
     """Get maximum allowed position size."""
-    manager = PositionLimitsManager(db_manager, kalshi_client)
+    manager = PositionLimitsManager(db_manager, polymarket_client)
     portfolio_value = await manager._get_portfolio_value()
     return portfolio_value * (manager.max_position_size_pct / 100) 

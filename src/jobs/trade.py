@@ -20,7 +20,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager
 from src.config.settings import settings
@@ -59,7 +59,7 @@ async def run_trading_job() -> Optional[TradingSystemResults]:
         
         # Initialize clients
         db_manager = DatabaseManager()
-        kalshi_client = KalshiClient()
+        polymarket_client = PolymarketClient()
         xai_client = XAIClient(db_manager=db_manager)  # Pass db_manager for LLM logging
         
         # Configure the unified system
@@ -89,7 +89,7 @@ async def run_trading_job() -> Optional[TradingSystemResults]:
         # Execute the unified trading system
         logger.info("🎯 Executing Unified Advanced Trading System")
         results = await run_unified_trading_system(
-            db_manager, kalshi_client, xai_client, config
+            db_manager, polymarket_client, xai_client, config
         )
         
         # Log comprehensive results
@@ -135,7 +135,7 @@ async def _fallback_legacy_trading() -> Optional[TradingSystemResults]:
         
         # Initialize components
         db_manager = DatabaseManager()
-        kalshi_client = KalshiClient()
+        polymarket_client = PolymarketClient()
         xai_client = XAIClient()
         
         # Get eligible markets
@@ -155,12 +155,12 @@ async def _fallback_legacy_trading() -> Optional[TradingSystemResults]:
             try:
                 # Make decision
                 position = await make_decision_for_market(
-                    market, db_manager, xai_client, kalshi_client
+                    market, db_manager, xai_client, polymarket_client
                 )
                 
                 if position:
                     # Execute position
-                    success = await execute_position(position, kalshi_client, db_manager)
+                    success = await execute_position(position, polymarket_client, db_manager)
                     if success:
                         positions_created += 1
                         total_exposure += position.entry_price * position.quantity

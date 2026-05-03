@@ -3,7 +3,7 @@
 import asyncio
 import sys
 sys.path.append('.')
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.database import DatabaseManager
 import aiosqlite
 from datetime import datetime, timedelta

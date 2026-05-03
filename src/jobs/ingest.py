@@ -1,15 +1,26 @@
 """
-Market Ingestion Job
+Market Ingestion Job — Polymarket edition.
 
-This job fetches active markets from the Kalshi API, transforms them into a structured format,
-and upserts them into the database.
+Discovers active Polymarket markets via the Gamma API, normalizes them into the
+project's `Market` dataclass shape, persists them to SQLite, and pushes the
+eligible subset onto a queue for downstream decision-making.
+
+This replaces the original Polymarket-events ingestion. Differences worth noting:
+  * Discovery is unauthenticated (Gamma) — no signing required.
+  * `condition_id` (hex) is used in place of Polymarket's `ticker` string. The
+    same field name (`Market.market_id`) is reused so downstream code does
+    not change.
+  * YES/NO token_ids returned by Gamma are registered against the live
+    `PolymarketClient` so subsequent order placement can resolve them
+    without an extra round-trip.
 """
+
 import asyncio
-import time
 from datetime import datetime
 from typing import Optional, List
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.gamma_client import GammaClient, to_legacy_market_shape
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.database import DatabaseManager, Market
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
@@ -21,235 +32,201 @@ async def process_and_queue_markets(
     db_manager: DatabaseManager,
     queue: asyncio.Queue,
     existing_position_market_ids: set,
+    polymarket_client: Optional[PolymarketClient],
     logger,
 ):
-    """
-    Transforms market data, upserts to DB, and puts eligible markets on the queue.
-    """
-    markets_to_upsert = []
-    for market_data in markets_data:
-        # A simple approach is to take the average of bid and ask.
-        # Kalshi API v2 uses dollar-denominated fields (yes_bid_dollars, yes_ask_dollars)
-        # These are already in dollars (e.g., 0.5000 = $0.50)
-        # Fall back to legacy cent-based fields (yes_bid, yes_ask) divided by 100
-        if "yes_bid_dollars" in market_data:
-            yes_bid = float(market_data.get("yes_bid_dollars", 0) or 0)
-            yes_ask = float(market_data.get("yes_ask_dollars", 0) or 0)
-            no_bid = float(market_data.get("no_bid_dollars", 0) or 0)
-            no_ask = float(market_data.get("no_ask_dollars", 0) or 0)
-            yes_price = (yes_bid + yes_ask) / 2
-            no_price = (no_bid + no_ask) / 2
-        else:
-            # Legacy API: values in cents (0-100)
-            yes_ask = market_data.get("yes_ask", 0) / 100
-            no_ask = market_data.get("no_ask", 0) / 100
-            yes_price = (market_data.get("yes_bid", 0) / 100 + yes_ask) / 2
-            no_price = (market_data.get("no_bid", 0) / 100 + no_ask) / 2
+    """Transform Gamma market dicts → `Market` rows, upsert, and queue eligible ones.
 
-        # Skip collection/aggregate tickers: both yes_ask and no_ask near $1.00
-        # (e.g. KXMVECROSSCATEGORY-*, KXMVESPORTSMULTIGAMEEXTENDED-*).
-        # The Kalshi API returns yes_ask=1.0000 and no_ask=1.0000 for these
-        # multi-event container markets — they are NOT real binary markets and
-        # cannot be traded.
-        _COLLECTION_THRESHOLD = 0.98
-        if yes_ask >= _COLLECTION_THRESHOLD and no_ask >= _COLLECTION_THRESHOLD:
-            logger.warning(
-                f"Skipping collection/aggregate market {market_data['ticker']}: "
-                f"yes_ask={yes_ask:.4f}, no_ask={no_ask:.4f} "
-                f"(both >= {_COLLECTION_THRESHOLD}, not a tradeable binary market)"
+    `markets_data` items must have already been processed by
+    :func:`gamma_client.to_legacy_market_shape` so they expose the legacy-compatible
+    field names (`ticker`, `yes_price`, `volume`, `expiration_time`, etc.) on
+    top of Polymarket-native fields (`condition_id`, `yes_token_id`, ...).
+    """
+    markets_to_upsert: List[Market] = []
+    for m in markets_data:
+        # Polymarket prices already come from Gamma in dollars (0.0–1.0). The
+        # to_legacy_market_shape() helper exposes them as `yes_bid_dollars` /
+        # `yes_ask_dollars` etc. — the same keys the legacy code reads.
+        yes_bid = float(m.get("yes_bid_dollars", 0) or 0)
+        yes_ask = float(m.get("yes_ask_dollars", 0) or 0)
+        no_bid = float(m.get("no_bid_dollars", 0) or 0)
+        no_ask = float(m.get("no_ask_dollars", 0) or 0)
+        yes_price = (yes_bid + yes_ask) / 2 if (yes_bid or yes_ask) else float(m.get("yes_price", 0) or 0)
+        no_price = (no_bid + no_ask) / 2 if (no_bid or no_ask) else float(m.get("no_price", 0) or 0)
+
+        # `is_tradeable_market` rejects markets where both asks are ≥ $0.99.
+        # On Polymarket this catches markets that have effectively resolved
+        # (one outcome priced near certainty) and would reject any new order.
+        if not is_tradeable_market(m):
+            logger.debug(
+                f"Skipping non-tradeable market {m.get('ticker')} "
+                f"(yes_ask={yes_ask}, no_ask={no_ask})"
             )
             continue
 
-        # Kalshi API v2 uses volume_fp (string/float) instead of volume (int)
-        volume = int(float(market_data.get("volume_fp", 0) or market_data.get("volume", 0) or 0))
-
-        has_position = market_data["ticker"] in existing_position_market_ids
-
-        # Skip collection/series tickers — these return $1.00/$1.00 for both
-        # sides and are not directly tradeable (see GitHub issue #42).
-        # Centralised in is_tradeable_market() so execute.py can reuse the same guard.
-        if not is_tradeable_market(market_data):
-            logger.debug(f"Skipping collection ticker {market_data['ticker']} (YES_ask={yes_ask}, NO_ask={no_ask})")
+        volume = int(float(m.get("volume_fp", 0) or m.get("volume", 0) or 0))
+        ticker = m.get("ticker") or m.get("condition_id") or ""
+        if not ticker:
             continue
 
+        has_position = ticker in existing_position_market_ids
+
+        # Parse expiration. Gamma supplies ISO-8601 in `expiration_time`.
+        expiration_ts = m.get("expiration_ts") or 0
+        if not expiration_ts and m.get("expiration_time"):
+            try:
+                expiration_ts = int(
+                    datetime.fromisoformat(
+                        m["expiration_time"].replace("Z", "+00:00")
+                    ).timestamp()
+                )
+            except (ValueError, TypeError):
+                expiration_ts = 0
+
         market = Market(
-            market_id=market_data["ticker"],
-            title=market_data["title"],
+            market_id=ticker,
+            title=m.get("title", ""),
             yes_price=yes_price,
             no_price=no_price,
             volume=volume,
-            expiration_ts=int(
-                datetime.fromisoformat(
-                    market_data["expiration_time"].replace("Z", "+00:00")
-                ).timestamp()
-            ),
-            category=market_data.get("category", "unknown"),
-            status=market_data["status"],
+            expiration_ts=expiration_ts,
+            category=m.get("category", "unknown"),
+            status=m.get("status", "active"),
             last_updated=datetime.now(),
             has_position=has_position,
         )
         markets_to_upsert.append(market)
 
-    if markets_to_upsert:
-        await db_manager.upsert_markets(markets_to_upsert)
-        logger.info(f"Successfully upserted {len(markets_to_upsert)} markets.")
-
-        # Primary filtering criteria - MORE PERMISSIVE FOR MORE OPPORTUNITIES!
-        min_volume: float = 100.0  # DECREASED: Much lower volume threshold (was 100, keeping low)
-        min_volume_for_ai_analysis: float = 150.0  # DECREASED: Lower volume for AI analysis (was 200, now 150)  
-        preferred_categories: List[str] = []  # Empty = all categories allowed
-        excluded_categories: List[str] = []  # Empty = no categories excluded
-
-        # Enhanced filtering for better opportunities - MORE PERMISSIVE FOR MORE TRADES
-        min_price_movement: float = 0.015  # DECREASED: Even lower minimum range (was 0.02, now 1.5¢)
-        max_bid_ask_spread: float = 0.20   # INCREASED: Allow even wider spreads (was 0.15, now 20¢)
-        min_confidence_for_long_term: float = 0.40  # DECREASED: Lower confidence required (was 0.5, now 40%)
-
-        eligible_markets = [
-            m
-            for m in markets_to_upsert
-            if m.volume >= min_volume
-            # REMOVED TIME RESTRICTION - we can now trade markets with ANY deadline!
-            # Dynamic exit strategies will handle timing automatically
-            and (
-                not settings.trading.preferred_categories
-                or m.category in settings.trading.preferred_categories
+        # Pre-register the YES/NO token_ids on the Polymarket client so the
+        # decide → execute pipeline can place orders without a Gamma re-fetch.
+        # Routing metadata (neg_risk, tick_size) is required for the SDK to
+        # pick the correct exchange contract — without it neg_risk markets
+        # silently reject orders.
+        yes_tok = m.get("yes_token_id")
+        no_tok = m.get("no_token_id")
+        if polymarket_client is not None and yes_tok and no_tok:
+            polymarket_client.register_market(
+                ticker,
+                yes_tok,
+                no_tok,
+                neg_risk=bool(m.get("neg_risk", False)),
+                tick_size=float(m.get("min_tick_size", 0.01) or 0.01),
             )
-            and m.category not in settings.trading.excluded_categories
-        ]
 
-        logger.info(
-            f"Found {len(eligible_markets)} eligible markets to process in this batch."
-        )
-        for market in eligible_markets:
-            await queue.put(market)
-
-    else:
+    if not markets_to_upsert:
         logger.info("No new markets to upsert in this batch.")
+        return
+
+    await db_manager.upsert_markets(markets_to_upsert)
+    logger.info(f"Successfully upserted {len(markets_to_upsert)} markets.")
+
+    # Apply the lightweight eligibility filter — heavier per-market filters
+    # (Kelly sizing, edge thresholds, AI confidence) live downstream in
+    # `decide.make_decision_for_market`.
+    min_volume: float = float(getattr(settings.trading, "min_volume", 100) or 100)
+    eligible = [
+        m for m in markets_to_upsert
+        if m.volume >= min_volume
+        and (
+            not settings.trading.preferred_categories
+            or m.category in settings.trading.preferred_categories
+        )
+        and m.category not in settings.trading.excluded_categories
+    ]
+    logger.info(f"Found {len(eligible)} eligible markets to process in this batch.")
+    for market in eligible:
+        await queue.put(market)
 
 
 async def run_ingestion(
     db_manager: DatabaseManager,
     queue: asyncio.Queue,
     market_ticker: Optional[str] = None,
+    polymarket_client: Optional[PolymarketClient] = None,
 ):
-    """
-    Main function for the market ingestion job.
+    """Main entry point for the market ingestion job.
 
     Args:
-        db_manager: DatabaseManager instance.
-        queue: asyncio.Queue to put ingested markets into.
-        market_ticker: Optional specific market ticker to ingest.
+        db_manager: Open DatabaseManager.
+        queue: asyncio.Queue ingested markets are pushed onto.
+        market_ticker: If set, fetch only this `condition_id` (hex string).
+        polymarket_client: Optional. If supplied, the discovered YES/NO
+            token_ids are registered on it so downstream order placement
+            can resolve them without a Gamma round-trip.
     """
     logger = get_trading_logger("market_ingestion")
-    logger.info("Starting market ingestion job.", market_ticker=market_ticker)
+    logger.info("Starting market ingestion job (Polymarket Gamma).", market_ticker=market_ticker)
 
-    kalshi_client = KalshiClient()
-
+    gamma = GammaClient()
     try:
-        # Get all market IDs with existing positions
         existing_position_market_ids = await db_manager.get_markets_with_positions()
 
+        # Translate optional category preferences (slugs) into numeric tag IDs
+        # for server-side filtering. Slugs that don't resolve are dropped with
+        # a warning by GammaClient.
+        tag_ids: Optional[List[int]] = None
+        exclude_tag_ids: Optional[List[int]] = None
+        if settings.trading.preferred_categories:
+            tag_ids = await gamma.resolve_tag_slugs(settings.trading.preferred_categories)
+        if settings.trading.excluded_categories or settings.trading.exclude_low_liquidity_categories:
+            slugs = list(settings.trading.excluded_categories) + list(
+                settings.trading.exclude_low_liquidity_categories
+            )
+            exclude_tag_ids = await gamma.resolve_tag_slugs(slugs)
+
         if market_ticker:
-            logger.info(f"Fetching single market: {market_ticker}")
-            market_response = await kalshi_client.get_market(ticker=market_ticker)
-            if market_response and "market" in market_response:
-                await process_and_queue_markets(
-                    [market_response["market"]],
-                    db_manager,
-                    queue,
-                    existing_position_market_ids,
-                    logger,
-                )
-            else:
-                logger.warning(f"Could not find market with ticker: {market_ticker}")
-        else:
-            # Primary: fetch via events API (Kalshi migrated all tickers to KXMVE*,
-            # so /markets only returns parlay tickers. Real markets live under events.)
-            logger.info("Fetching markets via events API (with nested markets).")
-            seen_tickers = set()
-            cursor = None
-            events_page = 0
+            logger.info(f"Fetching single market: condition_id={market_ticker}")
             try:
-                while True:
-                    params = {"status": "open", "limit": 100, "with_nested_markets": "true"}
-                    if cursor:
-                        params["cursor"] = cursor
-                    
-                    resp = await kalshi_client._make_authenticated_request(
-                        "GET", "/trade-api/v2/events", params=params
-                    )
-                    events = resp.get("events", [])
-                    if not events:
-                        break
-                    
-                    batch = []
-                    for event in events:
-                        for m in event.get("markets", []):
-                            ticker = m.get("ticker", "")
-                            if ticker and ticker not in seen_tickers and m.get("status") == "active":
-                                seen_tickers.add(ticker)
-                                batch.append(m)
-                    
-                    if batch:
-                        logger.info(f"Fetched {len(batch)} active markets from events page {events_page}.")
-                        await process_and_queue_markets(
-                            batch,
-                            db_manager,
-                            queue,
-                            existing_position_market_ids,
-                            logger,
-                        )
-                    
-                    cursor = resp.get("cursor")
-                    if not cursor:
-                        break
-                    events_page += 1
-                    # Cap at 20 pages (~2000 events, ~5000+ markets) to avoid
-                    # 16+ minute ingestion that blocks the trading cycle.
-                    # Most high-volume tradeable markets appear in the first pages.
-                    if events_page > 20:
-                        logger.info(f"Reached page limit (20), stopping ingestion with {len(seen_tickers)} markets.")
-                        break
-                    
-                    await asyncio.sleep(0.1)
-            except Exception as events_err:
-                logger.warning(f"Events API failed, falling back to /markets: {events_err}")
-            
-            # Fallback: also check /markets for anything missed
-            if len(seen_tickers) < 100:
-                logger.info(f"Few markets from events ({len(seen_tickers)}), also fetching /markets.")
-                cursor = None
-                while True:
-                    response = await kalshi_client.get_markets(limit=100, cursor=cursor)
-                    markets_page = response.get("markets", [])
+                m = await gamma.get_market(market_ticker)
+            except Exception as exc:
+                logger.warning(f"Could not fetch market {market_ticker}: {exc}")
+                return
+            await process_and_queue_markets(
+                [to_legacy_market_shape(m)],
+                db_manager,
+                queue,
+                existing_position_market_ids,
+                polymarket_client,
+                logger,
+            )
+            return
 
-                    active_markets = [m for m in markets_page if m["status"] == "active" 
-                                     and m.get("ticker", "") not in seen_tickers]
-                    if active_markets:
-                        for m in active_markets:
-                            seen_tickers.add(m.get("ticker", ""))
-                        logger.info(
-                            f"Fetched {len(markets_page)} markets, {len(active_markets)} new active."
-                        )
-                        await process_and_queue_markets(
-                            active_markets,
-                            db_manager,
-                            queue,
-                            existing_position_market_ids,
-                            logger,
-                        )
+        # Pull the active universe — capped at 2000 markets to keep ingestion
+        # under ~30 seconds. Polymarket has ~3000 active markets at peak;
+        # high-volume names appear in the first few hundred.
+        markets = await gamma.get_markets(
+            active=True,
+            closed=False,
+            archived=False,
+            accepting_orders=True,
+            min_volume=float(getattr(settings.trading, "min_volume", 100) or 100),
+            max_time_to_expiry_days=getattr(settings.trading, "max_time_to_expiry_days", None),
+            tag_ids=tag_ids or None,
+            exclude_tag_ids=exclude_tag_ids or None,
+            order="volume",
+            ascending=False,
+            max_results=2000,
+        )
+        logger.info(f"Gamma returned {len(markets)} markets after server+client filters.")
 
-                    cursor = response.get("cursor")
-                    if not cursor:
-                        break
-            
-            logger.info(f"Total unique markets ingested: {len(seen_tickers)}")
+        # Normalize once and forward in batches of ~200 to keep the queue
+        # latency bounded for downstream consumers.
+        BATCH = 200
+        for i in range(0, len(markets), BATCH):
+            chunk = [to_legacy_market_shape(m) for m in markets[i:i + BATCH]]
+            await process_and_queue_markets(
+                chunk,
+                db_manager,
+                queue,
+                existing_position_market_ids,
+                polymarket_client,
+                logger,
+            )
+
+        logger.info(f"Ingestion finished — {len(markets)} markets processed.")
 
     except Exception as e:
-        logger.error(
-            "An error occurred during market ingestion.", error=str(e), exc_info=True
-        )
+        logger.error("An error occurred during market ingestion.", error=str(e), exc_info=True)
     finally:
-        await kalshi_client.close()
+        await gamma.close()
         logger.info("Market ingestion job finished.")

@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple, NamedTuple
 from dataclasses import dataclass, asdict
 import numpy as np
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Market
 from src.config.settings import settings
@@ -86,11 +86,11 @@ class AdvancedMarketMaker:
     def __init__(
         self,
         db_manager: DatabaseManager,
-        kalshi_client: KalshiClient,
+        polymarket_client: PolymarketClient,
         xai_client: XAIClient
     ):
         self.db_manager = db_manager
-        self.kalshi_client = kalshi_client
+        self.polymarket_client = polymarket_client
         self.xai_client = xai_client
         self.logger = get_trading_logger("market_maker")
         
@@ -125,7 +125,7 @@ class AdvancedMarketMaker:
         for market in markets:
             try:
                 # Get current market data
-                market_data = await self.kalshi_client.get_market(market.market_id)
+                market_data = await self.polymarket_client.get_market(market.market_id)
                 if not market_data:
                     continue
                     
@@ -390,7 +390,7 @@ class AdvancedMarketMaker:
         
         orders.extend([yes_bid_order, no_bid_order])
         
-        # Place orders with Kalshi (simulated for now)
+        # Place orders with Polymarket (simulated for now)
         for order in orders:
             await self._place_limit_order(order)
         
@@ -408,11 +408,11 @@ class AdvancedMarketMaker:
             live_mode = getattr(settings.trading, 'live_trading_enabled', False)
             
             if live_mode:
-                # Place actual limit order with Kalshi
+                # Place actual limit order with Polymarket
                 import uuid
                 client_order_id = str(uuid.uuid4())
                 
-                # Convert side to match Kalshi API
+                # Convert side to match Polymarket CLOB
                 side = order.side.lower()  # "YES" -> "yes", "NO" -> "no"
                 
                 # Set price parameters based on side
@@ -432,7 +432,7 @@ class AdvancedMarketMaker:
                     order_params["no_price"] = int(order.price)
                 
                 # Place the order
-                response = await self.kalshi_client.place_order(**order_params)
+                response = await self.polymarket_client.place_order(**order_params)
                 
                 if response and 'order' in response:
                     order.status = "placed"
@@ -568,7 +568,7 @@ class AdvancedMarketMaker:
         """
         try:
             # Get current market data
-            market_data = await self.kalshi_client.get_market(order.market_id)
+            market_data = await self.polymarket_client.get_market(order.market_id)
             if not market_data:
                 return False
             
@@ -623,7 +623,7 @@ class AdvancedMarketMaker:
 
 async def run_market_making_strategy(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient, 
+    polymarket_client: PolymarketClient, 
     xai_client: XAIClient
 ) -> Dict:
     """
@@ -633,7 +633,7 @@ async def run_market_making_strategy(
     
     try:
         # Initialize market maker
-        market_maker = AdvancedMarketMaker(db_manager, kalshi_client, xai_client)
+        market_maker = AdvancedMarketMaker(db_manager, polymarket_client, xai_client)
         
         # Get eligible markets (remove time restrictions!)
         markets = await db_manager.get_eligible_markets(

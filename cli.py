@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Kalshi AI Trading Bot -- Unified CLI
+Polymarket AI Trading Bot -- Unified CLI
 
 Provides a single entry point for all bot operations:
     python cli.py run          Start the trading bot
     python cli.py dashboard    Launch the Streamlit monitoring dashboard
-    python cli.py status       Show portfolio balance, positions, and P&L
+    python cli.py status       Show USDC balance, positions, and P&L
     python cli.py backtest     Run backtests (placeholder)
     python cli.py health       Verify API connections, database, and configuration
+    python cli.py close-all    Liquidate all open positions on Polymarket
 """
 
 import argparse
@@ -104,7 +105,7 @@ def _run_safe_compounder(
     When ``loop`` is True, run the strategy repeatedly with ``interval``
     seconds between cycles until the user sends Ctrl-C.
     """
-    from src.clients.kalshi_client import KalshiClient
+    from src.clients import build_polymarket_clients
     from src.strategies.safe_compounder import SafeCompounder
 
     print("🔒 SAFE COMPOUNDER MODE")
@@ -115,15 +116,13 @@ def _run_safe_compounder(
         print(f"   Continuous mode — re-running every {interval}s. Ctrl-C to stop.")
 
     async def _run_once():
-        client = KalshiClient()
-        try:
+        async with build_polymarket_clients() as (client, gamma):
             compounder = SafeCompounder(
                 client=client,
+                gamma=gamma,
                 dry_run=not live_mode,
             )
             return await compounder.run()
-        finally:
-            await client.close()
 
     async def _run_forever():
         cycle = 0
@@ -174,69 +173,69 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
 
 
 def cmd_status(args: argparse.Namespace) -> None:
-    """Show current portfolio status: balance, positions, and P&L."""
+    """Show current portfolio status: USDC balance, positions, and P&L."""
 
     async def _status() -> None:
-        from src.clients.kalshi_client import KalshiClient
+        from src.clients import build_polymarket_clients
 
-        client = KalshiClient()
-        try:
-            # Fetch balance
+        async with build_polymarket_clients() as (client, _gamma):
+            # USDC.e balance via Polygon RPC
             balance_resp = await client.get_balance()
-            balance_cents = balance_resp.get("balance", 0)
-            balance_usd = balance_cents / 100.0
+            balance_usd = float(balance_resp.get("balance_dollars", 0))
+            address = balance_resp.get("address", "?")
 
-            # Fetch positions — Kalshi API v2 returns event_positions and market_positions
-            portfolio_value_cents = balance_resp.get("portfolio_value", 0)
-            portfolio_value_usd = portfolio_value_cents / 100.0
-
-            positions_resp = await client.get_positions()
-            event_positions = positions_resp.get("event_positions", [])
+            # Open positions via CLOB data API
+            try:
+                positions_resp = await client.get_positions()
+            except Exception as exc:
+                print(f"  ⚠️  Could not fetch positions: {exc}")
+                positions_resp = {"market_positions": []}
+            market_positions = positions_resp.get("market_positions", [])
             active_positions = [
-                p for p in event_positions
-                if float(p.get("event_exposure_dollars", "0")) > 0
+                p for p in market_positions if float(p.get("size", 0)) > 0
             ]
 
-            # Display
-            print("=" * 56)
-            print("  PORTFOLIO STATUS")
-            print("=" * 56)
-            print(f"  Available Cash:     ${balance_usd:>10,.2f}")
-            print(f"  Position Value:     ${portfolio_value_usd:>10,.2f}")
-            print(f"  Total Portfolio:    ${balance_usd + portfolio_value_usd:>10,.2f}")
+            mtm_value = sum(
+                float(p.get("size", 0)) * float(p.get("current_price", 0))
+                for p in active_positions
+            )
+
+            print("=" * 64)
+            print("  PORTFOLIO STATUS — Polymarket")
+            print("=" * 64)
+            print(f"  Wallet (funder):    {address}")
+            print(f"  Available USDC.e:   ${balance_usd:>10,.2f}")
+            print(f"  Position MTM Value: ${mtm_value:>10,.2f}")
+            print(f"  Total Portfolio:    ${balance_usd + mtm_value:>10,.2f}")
             print(f"  Active Positions:   {len(active_positions):>10}")
 
-            total_exposure = 0.0
+            total_cost = 0.0
             total_realized_pnl = 0.0
-            total_fees = 0.0
 
             if active_positions:
                 print()
-                print(f"  {'Event':<30} {'Exposure':>10} {'Cost':>10} {'P&L':>10} {'Fees':>8}")
-                print(f"  {'-'*30} {'-'*10} {'-'*10} {'-'*10} {'-'*8}")
-
+                print(f"  {'Condition':<22} {'Side':>4} {'Size':>8} {'Avg':>7} {'Cur':>7} {'MTM $':>9} {'Realized':>10}")
+                print(f"  {'-'*22} {'-'*4} {'-'*8} {'-'*7} {'-'*7} {'-'*9} {'-'*10}")
                 for pos in active_positions:
-                    ticker = pos.get("event_ticker", "???")
-                    exposure = float(pos.get("event_exposure_dollars", "0"))
-                    cost = float(pos.get("total_cost_dollars", "0"))
-                    pnl = float(pos.get("realized_pnl_dollars", "0"))
-                    fees = float(pos.get("fees_paid_dollars", "0"))
-                    total_exposure += exposure
+                    cond = (pos.get("condition_id") or pos.get("ticker") or "?")[:22]
+                    side = pos.get("side", "?")
+                    size = float(pos.get("size", 0))
+                    avg = float(pos.get("avg_price", 0))
+                    cur = float(pos.get("current_price", 0))
+                    mtm = size * cur
+                    cost = size * avg
+                    pnl = float(pos.get("realized_pnl_dollars", 0))
+                    total_cost += cost
                     total_realized_pnl += pnl
-                    total_fees += fees
                     print(
-                        f"  {ticker:<30} ${exposure:>8.2f} ${cost:>8.2f} "
-                        f"${pnl:>8.2f} ${fees:>6.2f}"
+                        f"  {cond:<22} {side:>4} {size:>8.0f} ${avg:>5.3f} ${cur:>5.3f} "
+                        f"${mtm:>7.2f} ${pnl:>8.2f}"
                     )
-
                 print()
-                print(f"  Total Exposure:     ${total_exposure:>10,.2f}")
+                print(f"  Total Cost Basis:   ${total_cost:>10,.2f}")
                 print(f"  Total Realized P&L: ${total_realized_pnl:>10,.2f}")
-                print(f"  Total Fees Paid:    ${total_fees:>10,.2f}")
 
-            print("=" * 56)
-        finally:
-            await client.close()
+            print("=" * 64)
 
     try:
         asyncio.run(_status())
@@ -370,9 +369,9 @@ def cmd_history(args: argparse.Namespace) -> None:
 
 
 def cmd_close_all(args: argparse.Namespace) -> None:
-    """Place sell orders to close every open position on Kalshi.
+    """Place sell orders to close every open position on Polymarket.
 
-    Use this AFTER stopping the bot (Ctrl-C). It queries Kalshi directly
+    Use this AFTER stopping the bot (Ctrl-C). It queries Polymarket directly
     rather than the local DB, so it works even if local state is stale.
     Each position gets a limit sell at the current best bid for its side
     — marketable, but no guaranteed fill if the book is thin.
@@ -400,17 +399,17 @@ def cmd_close_all(args: argparse.Namespace) -> None:
             return
 
     async def _close() -> None:
-        from src.clients.kalshi_client import KalshiClient
-        client = KalshiClient()
-        try:
+        from src.clients import build_polymarket_clients
+
+        async with build_polymarket_clients() as (client, _gamma):
             positions_resp = await client.get_positions()
             market_positions = [
                 p for p in positions_resp.get("market_positions", [])
-                if p.get("position", 0) != 0
+                if float(p.get("size", 0)) > 0
             ]
 
             if not market_positions:
-                print("  No open positions on Kalshi.")
+                print("  No open positions on Polymarket.")
                 return
 
             print(f"  Found {len(market_positions)} open position(s).")
@@ -419,37 +418,41 @@ def cmd_close_all(args: argparse.Namespace) -> None:
             placed = 0
             failed = 0
             for pos in market_positions:
-                ticker = pos["ticker"]
-                contracts = pos["position"]            # signed: + YES, - NO
-                side = "yes" if contracts > 0 else "no"
-                quantity = abs(contracts)
+                cond = pos.get("condition_id") or pos.get("ticker")
+                side = (pos.get("side") or "").lower()  # 'yes' / 'no'
+                quantity = int(float(pos.get("size", 0)))
+                if not cond or quantity <= 0 or side not in ("yes", "no"):
+                    print(f"  ⚠️  Skipping malformed position: {pos}")
+                    failed += 1
+                    continue
 
                 try:
-                    book_resp = await client.get_orderbook(ticker, depth=1)
+                    book_resp = await client.get_orderbook(cond, depth=1)
                     book = book_resp.get("orderbook", {})
                     side_bids = book.get(side, [])
                     if not side_bids:
-                        print(f"  ⚠️  {ticker}: no {side.upper()} bids in book — skipping")
+                        print(f"  ⚠️  {cond[:18]}…: no {side.upper()} bids — skipping")
                         failed += 1
                         continue
-                    # Kalshi orderbook bid entries are [price_cents, count].
-                    # Best bid is the highest price.
-                    best_bid_cents = max(int(level[0]) for level in side_bids)
+                    # Polymarket orderbook entries are [price_dollar_str, size_str].
+                    best_bid_dollars = max(float(level[0]) for level in side_bids)
+                    best_bid_cents = int(round(best_bid_dollars * 100))
                 except Exception as exc:
-                    print(f"  ❌ {ticker}: orderbook fetch failed — {exc}")
+                    print(f"  ❌ {cond[:18]}…: orderbook fetch failed — {exc}")
                     failed += 1
                     continue
 
                 if not live_mode:
                     print(
-                        f"  [DRY] would sell {quantity} {side.upper()} of {ticker} "
-                        f"at {best_bid_cents}¢ (~${best_bid_cents * quantity / 100:.2f})"
+                        f"  [DRY] would sell {quantity} {side.upper()} of "
+                        f"{cond[:18]}… at ${best_bid_dollars:.3f} "
+                        f"(~${best_bid_dollars * quantity:.2f})"
                     )
                     placed += 1
                     continue
 
                 order_params = {
-                    "ticker": ticker,
+                    "ticker": cond,            # condition_id (kept name for compat)
                     "client_order_id": str(uuid.uuid4()),
                     "side": side,
                     "action": "sell",
@@ -465,24 +468,22 @@ def cmd_close_all(args: argparse.Namespace) -> None:
                     resp = await client.place_order(**order_params)
                     if resp and "order" in resp:
                         print(
-                            f"  ✅ {ticker}: sell {quantity} {side.upper()} "
-                            f"@ {best_bid_cents}¢ — order_id={resp['order'].get('order_id', '?')}"
+                            f"  ✅ {cond[:18]}…: sell {quantity} {side.upper()} "
+                            f"@ ${best_bid_dollars:.3f} — order_id={resp['order'].get('order_id', '?')}"
                         )
                         placed += 1
                     else:
-                        print(f"  ❌ {ticker}: unexpected response {resp}")
+                        print(f"  ❌ {cond[:18]}…: unexpected response {resp}")
                         failed += 1
                 except Exception as exc:
-                    print(f"  ❌ {ticker}: order failed — {exc}")
+                    print(f"  ❌ {cond[:18]}…: order failed — {exc}")
                     failed += 1
 
             print()
             print(f"  Placed: {placed} | Failed: {failed}")
             print()
             print("  Sell orders are limit-priced — they may rest unfilled if the book")
-            print("  moves. Check Kalshi or `python cli.py status` after a minute.")
-        finally:
-            await client.close()
+            print("  moves. Check Polymarket or `python cli.py status` after a minute.")
 
     try:
         asyncio.run(_close())
@@ -509,8 +510,15 @@ def cmd_backtest(args: argparse.Namespace) -> None:
 
 
 def cmd_health(args: argparse.Namespace) -> None:
-    """Run health checks on configuration, API, and database."""
+    """Run health checks on configuration, API, and database.
 
+    Default mode is "fast" — read-only checks that don't sign anything or
+    derive API credentials. Pass ``--full`` to additionally verify the EIP-712
+    signing path against the CLOB (slower; consumes a Polymarket rate-limit
+    slot and shouldn't be run in tight loops).
+    """
+
+    full_mode = bool(getattr(args, "full", False))
     checks_passed = 0
     checks_failed = 0
 
@@ -543,7 +551,7 @@ def cmd_health(args: argparse.Namespace) -> None:
     load_dotenv()
 
     for var, placeholder in (
-        ("KALSHI_API_KEY", "your_kalshi_api_key_here"),
+        ("POLYMARKET_PRIVATE_KEY", "0xyour_polygon_private_key_here"),
         ("OPENROUTER_API_KEY", "your_openrouter_api_key_here"),
     ):
         val = os.getenv(var, "")
@@ -552,35 +560,92 @@ def cmd_health(args: argparse.Namespace) -> None:
         else:
             fail(f"{var} is missing or placeholder")
 
-    # 3. Kalshi API connection
-    async def _check_api() -> None:
-        from src.clients.kalshi_client import KalshiClient
-        client = KalshiClient()
+    # 3. Polygon RPC + USDC.e balance
+    async def _check_balance() -> None:
+        from src.clients.polymarket_client import PolymarketClient
+        client = PolymarketClient()
         try:
             balance_resp = await client.get_balance()
-            balance_usd = balance_resp.get("balance", 0) / 100.0
-            ok("Kalshi API connection", f"balance=${balance_usd:,.2f}")
+            balance_usd = float(balance_resp.get("balance_dollars", 0))
+            addr = balance_resp.get("address", "?")
+            ok("Polygon RPC + USDC.e balance", f"address={addr} balance=${balance_usd:,.2f}")
         except Exception as exc:
             msg = str(exc)
-            fail("Kalshi API connection", msg)
-            if "401" in msg or "authentication" in msg.lower():
+            fail("Polygon RPC / USDC.e balance", msg)
+            if "private_key" in msg.lower():
                 print(
-                    "         A 401 from Kalshi almost always means one of:\n"
-                    "           - KALSHI_API_KEY in .env doesn't match the API key ID on Kalshi\n"
-                    "           - The private key file (default: kalshi_private_key.pem) is the\n"
-                    "             wrong key for that API key, or its path is wrong\n"
-                    "           - The API key was created on the Kalshi demo env but you're\n"
-                    "             pointing at production (or vice versa)\n"
-                    "         Re-download the key pair from Kalshi and verify both KALSHI_API_KEY\n"
-                    "         and KALSHI_PRIVATE_KEY_PATH (if set) point to the matching pair."
+                    "         Check that POLYMARKET_PRIVATE_KEY in .env is a valid\n"
+                    "         0x-prefixed 64-hex-char private key (export from MetaMask)."
                 )
         finally:
             await client.close()
 
     try:
-        asyncio.run(_check_api())
+        asyncio.run(_check_balance())
     except Exception as exc:
-        fail("Kalshi API connection", str(exc))
+        fail("Polygon RPC / USDC.e balance", str(exc))
+
+    # 4. CLOB API auth (derives L2 API creds from the wallet signature)
+    # SLOW + signs a payload — gated by --full to avoid burning rate-limit on
+    # routine `cli.py health` invocations.
+    if full_mode:
+        async def _check_clob() -> None:
+            from src.clients.polymarket_client import PolymarketClient
+            client = PolymarketClient()
+            try:
+                await client._ensure_api_creds()
+                ok("Polymarket CLOB auth", "L2 API credentials derived")
+            except Exception as exc:
+                fail("Polymarket CLOB auth", str(exc))
+            finally:
+                await client.close()
+
+        try:
+            asyncio.run(_check_clob())
+        except Exception as exc:
+            fail("Polymarket CLOB auth", str(exc))
+    else:
+        print("  [SKIP] Polymarket CLOB auth   -- pass --full to test signing")
+
+    # 5. USDC + CTF allowances
+    async def _check_allowances() -> None:
+        from src.clients.polymarket_client import PolymarketClient
+        client = PolymarketClient()
+        try:
+            results = await client.check_allowances()
+            missing = [label for label, set_ok in results.items() if not set_ok]
+            if not missing:
+                ok("USDC allowances", "all 3 Polymarket spenders approved")
+            else:
+                fail("USDC allowances", f"missing: {', '.join(missing)}")
+                print("         Run: python scripts/set_allowances.py --send")
+        except Exception as exc:
+            fail("USDC allowances", str(exc))
+        finally:
+            await client.close()
+
+    try:
+        asyncio.run(_check_allowances())
+    except Exception as exc:
+        fail("USDC allowances", str(exc))
+
+    # 6. Gamma API reachability
+    async def _check_gamma() -> None:
+        from src.clients.gamma_client import GammaClient
+        async with GammaClient() as gc:
+            try:
+                markets = await gc.get_markets(max_results=1)
+                if markets:
+                    ok("Gamma API connection", f"sample question: {markets[0].get('question', '')[:40]}")
+                else:
+                    fail("Gamma API connection", "returned no markets")
+            except Exception as exc:
+                fail("Gamma API connection", str(exc))
+
+    try:
+        asyncio.run(_check_gamma())
+    except Exception as exc:
+        fail("Gamma API connection", str(exc))
 
     # 4. Database
     db_path = Path(__file__).parent / "trading_system.db"
@@ -623,8 +688,8 @@ def cmd_health(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="kalshi-bot",
-        description="Kalshi AI Trading Bot -- Multi-model AI trading for prediction markets",
+        prog="polymarket-bot",
+        description="Polymarket AI Trading Bot -- Multi-model AI trading for prediction markets",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
@@ -738,7 +803,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = subparsers.add_parser(
         "status",
         help="Show portfolio balance, positions, and P&L",
-        description="Connect to the Kalshi API and display current account balance, open positions, and estimated portfolio value.",
+        description="Connect to Polymarket and display current USDC.e balance, open positions, and mark-to-market value.",
     )
     p_status.set_defaults(func=cmd_status)
 
@@ -754,16 +819,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_health = subparsers.add_parser(
         "health",
         help="Verify API connections, database, and configuration",
-        description="Run a series of diagnostic checks: .env presence, API key configuration, Kalshi API connectivity, database initialization, and Python version.",
+        description="Run a series of diagnostic checks: .env presence, key configuration, Polygon RPC + USDC balance, USDC allowances, Gamma reachability, database initialization, and Python version. CLOB signing is skipped by default — pass --full to include it.",
+    )
+    p_health.add_argument(
+        "--full",
+        action="store_true",
+        help="Also derive L2 API credentials from the wallet signature (slow; "
+             "consumes a Polymarket rate-limit slot — don't run in tight loops)",
     )
     p_health.set_defaults(func=cmd_health)
 
     # --- close-all ---
     p_close = subparsers.add_parser(
         "close-all",
-        help="Place limit sell orders to close every open position on Kalshi",
+        help="Place limit sell orders to close every open position on Polymarket",
         description=(
-            "Best-effort liquidation: query Kalshi for open positions and place "
+            "Best-effort liquidation: query Polymarket for open positions and place "
             "a limit sell at the current best bid for each. Run this AFTER stopping "
             "the bot. Defaults to dry-run; pass --live to actually send orders."
         ),

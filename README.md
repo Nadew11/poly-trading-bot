@@ -1,18 +1,15 @@
-# Kalshi AI Trading Bot
+# Polymarket AI Trading Bot
 
 <div align="center">
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/ryanfrigo/kalshi-ai-trading-bot?style=flat&color=yellow)](https://github.com/ryanfrigo/kalshi-ai-trading-bot/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/ryanfrigo/kalshi-ai-trading-bot?style=flat&color=blue)](https://github.com/ryanfrigo/kalshi-ai-trading-bot/network)
-[![GitHub Issues](https://img.shields.io/github/issues/ryanfrigo/kalshi-ai-trading-bot)](https://github.com/ryanfrigo/kalshi-ai-trading-bot/issues)
 
-**A toolkit for building automated trading strategies on [Kalshi](https://kalshi.com) prediction markets.**
+**A toolkit for building automated trading strategies on [Polymarket](https://polymarket.com) prediction markets.**
 
-Signed Kalshi API client, market-data ingestion, position tracking, SQLite telemetry, a Streamlit dashboard, and a pluggable LLM client (any model on OpenRouter). Three example strategies ship with the repo as starting points — fork them, replace them, or write your own from scratch.
+Polymarket CLOB client (EIP-712 signed orders via [`py-clob-client`](https://github.com/Polymarket/py-clob-client)), Gamma API ingestion for market discovery, USDC.e balance reads on Polygon, position tracking, SQLite telemetry, a Streamlit dashboard, and a pluggable LLM client (any model on OpenRouter). Three example strategies ship with the repo as starting points — fork them, replace them, or write your own from scratch.
 
-[Quick Start](#quick-start) · [What's Included](#whats-included) · [Example Strategies](#example-strategies) · [Configuration](#configuration) · [Contributing](CONTRIBUTING.md) · [Kalshi API Docs](https://trading-api.readme.io/reference/getting-started)
+> **Heritage note.** The trading-strategy logic, risk management, dashboard, telemetry, and LLM stack are exchange-agnostic. The exchange layer (CLOB client, market discovery, USDC.e balance reads on Polygon) is purpose-built for Polymarket. Any `*.legacy.bak` files in `src/clients/` are archived sources from a previous exchange port and will be removed once a live trading session has been verified end-to-end.
 
 </div>
 
@@ -26,18 +23,25 @@ Signed Kalshi API client, market-data ingestion, position tracking, SQLite telem
 
 ```bash
 # 1. Clone and set up
-git clone https://github.com/ryanfrigo/kalshi-ai-trading-bot.git
-cd kalshi-ai-trading-bot
-python setup.py        # creates .venv, installs deps
+git clone <your fork URL>
+cd polymarket-trading-bot
+python setup.py        # creates .venv, installs deps (incl. py-clob-client + web3)
 
-# 2. Add your API keys
+# 2. Add your keys & wallet
 cp env.template .env
-# then open .env and fill in KALSHI_API_KEY and OPENROUTER_API_KEY
+# then open .env and fill in:
+#   POLYMARKET_PRIVATE_KEY   — Polygon wallet that will sign orders
+#   POLYMARKET_FUNDER        — proxy address (only if SIGNATURE_TYPE != 0)
+#   POLYMARKET_SIGNATURE_TYPE — 0=EOA/MetaMask, 1=Magic Link, 2=Gnosis Safe
+#   OPENROUTER_API_KEY       — for LLM-driven strategies
 
-# 3. Verify connectivity
+# 3. (One-time) approve USDC allowances for the Polymarket contracts
+python scripts/set_allowances.py
+
+# 4. Verify connectivity
 python cli.py health
 
-# 4. Run an example strategy in paper mode
+# 5. Run an example strategy in DRY-RUN mode (default)
 python cli.py run --paper                  # AI directional (LLM-driven)
 python cli.py run --safe-compounder        # Edge-based NO-side, no LLM
 ```
@@ -48,8 +52,9 @@ Open the dashboard in another terminal:
 python cli.py dashboard
 ```
 
-> **Need API keys?**
-> - Kalshi key + private key → [kalshi.com/account/settings](https://kalshi.com/account/settings)
+> **Need keys?**
+> - Polygon wallet → export the private key from MetaMask (or use a Magic Link wallet from [polymarket.com](https://polymarket.com))
+> - You'll also need USDC.e on Polygon to actually trade — `python cli.py status` will print your balance
 > - OpenRouter key → [openrouter.ai](https://openrouter.ai/)
 
 ---
@@ -60,9 +65,9 @@ This repo gives you the building blocks. The example strategies use them — you
 
 | Component | What it does | Where it lives |
 |---|---|---|
-| **Kalshi client** | Authenticated REST + WebSocket client (RSA signing, retries, rate-limit handling) | `src/clients/kalshi_client.py` |
+| **Polymarket client** | Authenticated REST + WebSocket client (RSA signing, retries, rate-limit handling) | `src/clients/polymarket_client.py` |
 | **Market ingestion** | Pulls the full tradeable universe via the Events API, persists to SQLite | `src/jobs/ingest.py` |
-| **Position tracking** | Stop-loss, take-profit, time-based, and resolution-based exits with real Kalshi sell orders | `src/jobs/track.py` |
+| **Position tracking** | Stop-loss, take-profit, time-based, and resolution-based exits with real Polymarket sell orders | `src/jobs/track.py` |
 | **LLM client** | Single OpenRouter API key, swap models with one config line, fallback chain on errors, persistent daily-cost tracker | `src/clients/openrouter_client.py`, `src/clients/xai_client.py` |
 | **SQLite telemetry** | Every trade, AI decision, and cost metric logged locally | `src/utils/database.py` |
 | **Streamlit dashboard** | Real-time portfolio, positions, P&L, decision logs | `beast_mode_dashboard.py` |
@@ -93,7 +98,7 @@ Defaults: 15% max drawdown, 45% min confidence, 3% max position size, 30% max se
 
 ### 2. Safe Compounder — `python cli.py run --safe-compounder`
 
-Pure edge-based math, no LLM required. Scans every active Kalshi market for NO-side asks above a price threshold with a positive expected-value edge, then places resting maker orders one cent below the ask.
+Pure edge-based math, no LLM required. Scans every active Polymarket market for NO-side asks above a price threshold with a positive expected-value edge, then places resting maker orders one cent below the ask.
 
 ```bash
 python cli.py run --safe-compounder              # dry-run preview
@@ -113,7 +118,7 @@ Aggressive settings with no category guardrails. Available for comparison and ex
 
 ## Stopping Cleanly
 
-Ctrl-C sends SIGINT and triggers graceful shutdown — the bot finishes the in-flight cycle, logs, and exits. Open positions remain on Kalshi until they resolve.
+Ctrl-C sends SIGINT and triggers graceful shutdown — the bot finishes the in-flight cycle, logs, and exits. Open positions remain on Polymarket until they resolve.
 
 If you want to **liquidate everything** before stepping away:
 
@@ -129,7 +134,7 @@ python cli.py close-all --live       # actually send orders
 python cli.py status
 ```
 
-`close-all` queries Kalshi directly (not the local DB), so it works even when local state is stale. Sells are limit-priced, so they may rest unfilled on thin books — check Kalshi or `cli.py status` after a minute.
+`close-all` queries Polymarket directly (not the local DB), so it works even when local state is stale. Sells are limit-priced, so they may rest unfilled on thin books — check Polymarket or `cli.py status` after a minute.
 
 ---
 
@@ -138,14 +143,14 @@ python cli.py status
 ### Prerequisites
 
 - Python 3.12 or later
-- A [Kalshi](https://kalshi.com) account with API access ([API docs](https://trading-api.readme.io/reference/getting-started))
+- A [Polymarket](https://polymarket.com) account with API access ([API docs](https://docs.polymarket.com))
 - An [OpenRouter](https://openrouter.ai/) API key (only needed for the AI directional strategy)
 
 ### Automated Setup
 
 ```bash
-git clone https://github.com/ryanfrigo/kalshi-ai-trading-bot.git
-cd kalshi-ai-trading-bot
+git clone https://github.com/zostaff/polymarket-ai-trading-bot.git
+cd polymarket-ai-trading-bot
 python setup.py
 ```
 
@@ -154,8 +159,8 @@ Creates a virtual env, installs dependencies, and prints next steps.
 ### Manual Setup
 
 ```bash
-git clone https://github.com/ryanfrigo/kalshi-ai-trading-bot.git
-cd kalshi-ai-trading-bot
+git clone https://github.com/zostaff/polymarket-ai-trading-bot.git
+cd polymarket-ai-trading-bot
 
 python -m venv .venv
 source .venv/bin/activate        # macOS / Linux
@@ -173,10 +178,16 @@ cp env.template .env
 
 | Variable | Description |
 |---|---|
-| `KALSHI_API_KEY` | Your Kalshi API key ID |
-| `OPENROUTER_API_KEY` | OpenRouter key (only for AI directional strategy) |
+| `POLYMARKET_PRIVATE_KEY` | Polygon wallet private key that signs orders (0x-prefixed 64-hex) |
+| `POLYMARKET_FUNDER` | Optional. Proxy address that holds USDC (only set when `SIGNATURE_TYPE != 0`) |
+| `POLYMARKET_SIGNATURE_TYPE` | `0` = EOA / MetaMask (default), `1` = Magic Link, `2` = Gnosis Safe |
+| `POLYMARKET_HOST` | Defaults to `https://clob.polymarket.com` |
+| `POLYMARKET_CHAIN_ID` | Defaults to `137` (Polygon mainnet) |
+| `POLYGON_RPC_URL` | Optional custom Polygon RPC; defaults to the public endpoint |
+| `OPENROUTER_API_KEY` | OpenRouter key (only for the AI directional strategy) |
+| `DRY_RUN` / `LIVE_TRADING_ENABLED` | `DRY_RUN=true` (default) keeps the bot in paper mode. `LIVE_TRADING_ENABLED=true` is the legacy flag, equivalent to `DRY_RUN=false`. |
 
-Place your Kalshi private key as `kalshi_private_key` (no extension) in the project root. Download it from [Kalshi Settings → API](https://kalshi.com/account/settings). It's git-ignored.
+The wallet's private key lives in `.env` only — never on disk. `.env` is git-ignored.
 
 Verify everything is wired:
 
@@ -221,7 +232,7 @@ daily_ai_cost_limit    = 10.0    # Max daily LLM spend in USD
 ## Project Structure
 
 ```
-kalshi-ai-trading-bot/
+polymarket-ai-trading-bot/
 ├── beast_mode_bot.py          # Example AI directional bot — main loop orchestration
 ├── cli.py                     # Unified CLI: run, dashboard, status, health, close-all, scores, history
 ├── paper_trader.py            # Paper-trading signal logger + static dashboard
@@ -230,7 +241,7 @@ kalshi-ai-trading-bot/
 │
 ├── src/
 │   ├── agents/                # UNWIRED scaffolding for multi-agent debate (fork to use)
-│   ├── clients/               # Kalshi, OpenRouter, WebSocket clients
+│   ├── clients/               # Polymarket, OpenRouter, WebSocket clients
 │   ├── config/                # Settings and trading parameters
 │   ├── data/                  # News + sentiment helpers (optional)
 │   ├── events/                # Async event bus
@@ -263,7 +274,7 @@ Output goes to `docs/paper_dashboard.html`.
 
 ## Category Scoring (used by AI Directional)
 
-The category scorer evaluates each Kalshi market category on a 0-100 scale based on historical ROI, win rate, recent trend, and sample size. Allocation per category is gated by score.
+The category scorer evaluates each Polymarket market category on a 0-100 scale based on historical ROI, win rate, recent trend, and sample size. Allocation per category is gated by score.
 
 | Score | Max Position | Status |
 |---|---|---|
@@ -288,7 +299,7 @@ Every trade, AI decision, and cost metric is recorded to `trading_system.db` (lo
 ```bash
 python cli.py history                # Last 50 trades
 python cli.py history --limit 100    # Last 100
-python cli.py status                 # Live balance + open positions from Kalshi
+python cli.py status                 # Live balance + open positions from Polymarket
 ```
 
 ---
@@ -315,7 +326,7 @@ mypy src/
 
 1. Create a module under `src/strategies/`
 2. Wire it into a CLI flag in `cli.py` (or invoke it directly)
-3. Use the `KalshiClient` for orders/positions and `DatabaseManager` for state
+3. Use the `PolymarketClient` for orders/positions and `DatabaseManager` for state
 4. Add tests under `tests/`
 
 ---
@@ -323,15 +334,20 @@ mypy src/
 ## Troubleshooting
 
 <details>
-<summary><strong>Health check fails with HTTP 401</strong></summary>
+<summary><strong>Health check fails with auth / signing error</strong></summary>
 
-A 401 from Kalshi almost always means one of three things:
+Polymarket auth = an EIP-712 signature derived from your wallet's private key. Auth failures usually mean one of:
 
-1. `KALSHI_API_KEY` in `.env` doesn't match the API key ID shown in Kalshi
-2. The private key file (`kalshi_private_key`) is the wrong key for that API key, or its path is wrong
-3. The key was created on Kalshi's demo environment but you're pointing at production (or vice versa)
+1. `POLYMARKET_PRIVATE_KEY` in `.env` is malformed (must be `0x` + 64 hex chars).
+2. `POLYMARKET_SIGNATURE_TYPE` doesn't match the wallet kind: `0` for an EOA you exported from MetaMask, `1` for a Magic-Link / email-login wallet, `2` for Gnosis Safe / browser proxy. With `1` or `2`, you also need to set `POLYMARKET_FUNDER` to the proxy address that holds USDC.
+3. `python cli.py health --full` is the path that actually signs — the default health command skips it to save Polymarket rate-limit slots.
 
-Re-download the key pair from Kalshi and verify both values point to the matching pair. The health check will print this hint when it detects a 401.
+</details>
+
+<details>
+<summary><strong>Order placement fails with `not allowed for this market`</strong></summary>
+
+Polymarket has two exchange contracts: the standard CTF Exchange and the newer `neg_risk_exchange` for negative-risk markets (most multi-outcome event markets). The bot reads each market's `negRisk` flag from Gamma at ingestion time and routes orders accordingly. If you see this error, verify the market was registered through the ingestion job (not constructed by hand) — `polymarket_client.register_market(condition_id, yes, no, neg_risk=...)` must be called with the right flag.
 
 </details>
 
@@ -388,7 +404,7 @@ If AdGuard is running as a system-level proxy, `pip install` may time out during
 grep -i "live trading\|paper trading\|LIVE ORDER" logs/trading_system.log | tail -20
 ```
 
-If you see "Paper trading mode" the flag isn't taking effect. Verify the API key has trading permissions in [Kalshi Settings](https://kalshi.com/account/settings).
+If you see "Paper trading mode" the flag isn't taking effect. Verify the API key has trading permissions in [Polymarket Settings](https://polymarket.com).
 
 </details>
 
@@ -402,7 +418,7 @@ Model names on OpenRouter change. Update `primary_model` in `src/config/settings
 <details>
 <summary><strong>Bot only seeing "KXMVE" tickers</strong></summary>
 
-The Kalshi `/markets` endpoint returns parlay tickers; real markets live under the Events API. The ingestion pipeline already uses Events with nested markets. If you see only `KXMVE*`, check API permissions and run `python cli.py health`.
+The Polymarket `/markets` endpoint returns parlay tickers; real markets live under the Events API. The ingestion pipeline already uses Events with nested markets. If you see only `KXMVE*`, check API permissions and run `python cli.py health`.
 
 </details>
 
@@ -428,7 +444,7 @@ pip install -r requirements.txt
 
 ## Lessons From Live Trading
 
-These are observations from running the example strategies with real money on Kalshi. They informed the defaults shipped here. They are **not** universal trading wisdom — they're notes from one set of experiments.
+These are observations from running the example strategies with real money on Polymarket. They informed the defaults shipped here. They are **not** universal trading wisdom — they're notes from one set of experiments.
 
 **1. Category discipline mattered more than AI confidence.** The LLM could be 80% confident on a CPI trade and still be wrong. Market-implied probabilities on highly-watched economic releases are already efficient.
 
@@ -461,9 +477,9 @@ git checkout -b feature/your-feature
 
 ## Resources
 
-- [Kalshi Trading API](https://trading-api.readme.io/reference/getting-started)
-- [Kalshi API Authentication](https://trading-api.readme.io/reference/authentication)
-- [Kalshi Markets](https://kalshi.com/markets)
+- [Polymarket Trading API](https://docs.polymarket.com)
+- [Polymarket CLOB Authentication](https://docs.polymarket.com)
+- [Polymarket Markets](https://polymarket.com/markets)
 - [OpenRouter Model Catalog](https://openrouter.ai/models)
 
 ---

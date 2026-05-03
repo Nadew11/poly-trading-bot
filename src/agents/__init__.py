@@ -1,5 +1,5 @@
 """
-Multi-agent ensemble decision engine for Kalshi trading.
+Multi-agent ensemble decision engine for Polymarket trading.
 
 This package implements a multi-model AI ensemble that combines
 forecasting, news analysis, bull/bear research, risk management,

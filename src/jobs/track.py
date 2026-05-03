@@ -15,7 +15,7 @@ from typing import Optional
 from src.utils.database import DatabaseManager, Position, TradeLog
 from src.config.settings import settings
 from src.utils.logging_setup import setup_logging, get_trading_logger
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 
 async def should_exit_position(
     position: Position, 
@@ -138,7 +138,7 @@ async def run_tracking(db_manager: Optional[DatabaseManager] = None):
         db_manager = DatabaseManager()
         await db_manager.initialize()
 
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
 
     try:
         # Step 1: Place sell limit orders for profit-taking and stop-loss
@@ -147,14 +147,14 @@ async def run_tracking(db_manager: Optional[DatabaseManager] = None):
         logger.info("🎯 Checking for profit-taking opportunities...")
         profit_results = await place_profit_taking_orders(
             db_manager=db_manager,
-            kalshi_client=kalshi_client,
+            polymarket_client=polymarket_client,
             profit_threshold=0.20  # 20% profit target
         )
         
         logger.info("🛡️ Checking for stop-loss protection...")
         stop_loss_results = await place_stop_loss_orders(
             db_manager=db_manager,
-            kalshi_client=kalshi_client,
+            polymarket_client=polymarket_client,
             stop_loss_threshold=-0.15  # 15% stop loss
         )
         
@@ -179,7 +179,7 @@ async def run_tracking(db_manager: Optional[DatabaseManager] = None):
         for position in open_positions:
             try:
                 # Get current market data
-                market_response = await kalshi_client.get_market(position.market_id)
+                market_response = await polymarket_client.get_market(position.market_id)
                 market_data = market_response.get('market', {})
 
                 if not market_data:
@@ -215,8 +215,8 @@ async def run_tracking(db_manager: Optional[DatabaseManager] = None):
                         f"Entry: {position.entry_price:.3f}, Exit: {exit_price:.3f}"
                     )
 
-                    # For non-resolution exits, place a real sell order on Kalshi
-                    # before touching the DB. Kalshi auto-settles resolved markets,
+                    # For non-resolution exits, place a real sell order on Polymarket
+                    # before touching the DB. Polymarket auto-settles resolved markets,
                     # so we skip order placement only in the market_resolution case.
                     is_resolution = (exit_reason == "market_resolution")
 
@@ -238,7 +238,7 @@ async def run_tracking(db_manager: Optional[DatabaseManager] = None):
                             position=position,
                             limit_price=exit_price,
                             db_manager=db_manager,
-                            kalshi_client=kalshi_client,
+                            polymarket_client=polymarket_client,
                         )
                         if not sell_ok:
                             logger.error(
@@ -304,7 +304,7 @@ async def run_tracking(db_manager: Optional[DatabaseManager] = None):
     except Exception as e:
         logger.error("Error in position tracking job.", error=str(e), exc_info=True)
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
 
 if __name__ == "__main__":
     setup_logging()

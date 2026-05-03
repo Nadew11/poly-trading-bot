@@ -6,7 +6,7 @@ from datetime import datetime
 from src.jobs.decide import make_decision_for_market
 from src.utils.database import DatabaseManager
 from src.clients.xai_client import XAIClient
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.config.settings import settings
 from tests.test_database import load_and_prepare_markets, TEST_DB, FIXTURE_PATH
 from tests.test_helpers import find_suitable_test_market
@@ -17,13 +17,13 @@ pytestmark = pytest.mark.asyncio
 async def test_make_decision_for_market_creates_position():
     """
     Test that the decision engine correctly creates a position when the LLM returns a BUY decision.
-    Uses real Kalshi API and XAI client - no mocks.
+    Uses real Polymarket CLOB and XAI client - no mocks.
     """
     db_manager = DatabaseManager(db_path=TEST_DB)
     await db_manager.initialize()
     
     # Use real clients - no mocking
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     xai_client = XAIClient()
     
     try:
@@ -40,7 +40,7 @@ async def test_make_decision_for_market_creates_position():
         
         # Test the decision making process
         position = await make_decision_for_market(
-            test_market, db_manager, xai_client, kalshi_client
+            test_market, db_manager, xai_client, polymarket_client
         )
         
         # The test passes if no exceptions are thrown
@@ -57,7 +57,7 @@ async def test_make_decision_for_market_creates_position():
             print("AI decided not to trade this market")
         
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
         await xai_client.close()
         # Clean up test database
         if os.path.exists(TEST_DB):

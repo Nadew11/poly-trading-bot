@@ -1,6 +1,6 @@
 # Quick Flip Scalping Strategy 🎯
 
-A high-frequency scalping strategy that targets rapid profits on low-priced Kalshi contracts.
+A high-frequency scalping strategy that targets rapid profits on low-priced Polymarket contracts.
 
 ## Strategy Overview
 
@@ -94,7 +94,7 @@ The strategy is automatically included in the unified trading system:
 from src.strategies.unified_trading_system import run_unified_trading_system
 
 # Quick flip runs automatically as part of unified system
-results = await run_unified_trading_system(db_manager, kalshi_client, xai_client)
+results = await run_unified_trading_system(db_manager, polymarket_client, xai_client)
 ```
 
 ### Manual Execution
@@ -109,7 +109,7 @@ config = QuickFlipConfig(
 
 results = await run_quick_flip_strategy(
     db_manager=db_manager,
-    kalshi_client=kalshi_client, 
+    polymarket_client=polymarket_client, 
     xai_client=xai_client,
     available_capital=500.0,
     config=config

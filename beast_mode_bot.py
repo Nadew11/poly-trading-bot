@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kalshi AI Trading Bot — example LLM-driven directional strategy
+Polymarket AI Trading Bot — example LLM-driven directional strategy
 
 Main entry point for the example AI directional strategy. The actual
 LLM call goes through src/clients/xai_client.py → openrouter_client.py,
@@ -35,7 +35,7 @@ from src.jobs.track import run_tracking
 from src.jobs.evaluate import run_evaluation
 from src.utils.logging_setup import setup_logging, get_trading_logger
 from src.utils.database import DatabaseManager
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.config.settings import settings
 
@@ -81,7 +81,7 @@ class BeastModeBot:
         
         if live_mode:
             self.logger.warning("⚠️ LIVE TRADING MODE ENABLED - REAL MONEY WILL BE USED")
-            self.logger.warning("⚠️ All orders will be placed on the Kalshi exchange")
+            self.logger.warning("⚠️ All orders will be placed on the Polymarket")
         else:
             self.logger.info("📝 Paper trading mode - orders will be simulated")
 
@@ -113,7 +113,7 @@ class BeastModeBot:
             self.logger.info("✅ Database initialization complete!")
             
             # Initialize other components
-            kalshi_client = KalshiClient()
+            polymarket_client = PolymarketClient()
 
             # LLM client — single-model with OpenRouter fallback chain. The
             # XAIClient name is historical; it routes through OpenRouter,
@@ -132,14 +132,14 @@ class BeastModeBot:
             self.logger.info("✅ Initial market ingestion complete. Starting trading cycles.")
             
             # Then start background refresh loop
-            ingestion_task = asyncio.create_task(self._run_market_ingestion(db_manager, kalshi_client))
+            ingestion_task = asyncio.create_task(self._run_market_ingestion(db_manager, polymarket_client))
             
             # Run remaining background tasks
             self.logger.info("🚀 Starting trading and monitoring tasks...")
             tasks = [
                 ingestion_task,  # Already started
-                asyncio.create_task(self._run_trading_cycles(db_manager, kalshi_client)),
-                asyncio.create_task(self._run_position_tracking(db_manager, kalshi_client)),
+                asyncio.create_task(self._run_trading_cycles(db_manager, polymarket_client)),
+                asyncio.create_task(self._run_position_tracking(db_manager, polymarket_client)),
                 asyncio.create_task(self._run_performance_evaluation(db_manager))
             ]
             
@@ -180,7 +180,7 @@ class BeastModeBot:
             await asyncio.gather(*tasks, return_exceptions=True)
 
             await self.xai_client.close()
-            await kalshi_client.close()
+            await polymarket_client.close()
             
             self.logger.info("🏁 Beast Mode Bot shut down gracefully")
             
@@ -206,7 +206,7 @@ class BeastModeBot:
             self.logger.error(f"Database initialization failed: {e}")
             raise
 
-    async def _run_market_ingestion(self, db_manager: DatabaseManager, kalshi_client: KalshiClient):
+    async def _run_market_ingestion(self, db_manager: DatabaseManager, polymarket_client: PolymarketClient):
         """Background task for market data ingestion."""
         while not self.shutdown_event.is_set():
             try:
@@ -219,7 +219,7 @@ class BeastModeBot:
                 self.logger.error(f"Error in market ingestion: {e}")
                 await asyncio.sleep(60)
 
-    async def _run_trading_cycles(self, db_manager: DatabaseManager, kalshi_client: KalshiClient):
+    async def _run_trading_cycles(self, db_manager: DatabaseManager, polymarket_client: PolymarketClient):
         """Main Beast Mode trading cycles."""
         cycle_count = 0
         
@@ -312,7 +312,7 @@ class BeastModeBot:
             # Safety fallback
             await asyncio.sleep(60)
 
-    async def _run_position_tracking(self, db_manager: DatabaseManager, kalshi_client: KalshiClient):
+    async def _run_position_tracking(self, db_manager: DatabaseManager, polymarket_client: PolymarketClient):
         """Background task for position tracking and exit strategies."""
         while not self.shutdown_event.is_set():
             try:

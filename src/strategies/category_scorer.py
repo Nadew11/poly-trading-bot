@@ -400,7 +400,7 @@ class CategoryScorer:
 
 def infer_category(ticker: str, title: str = "") -> str:
     """
-    Infer trading category from a Kalshi ticker or market title.
+    Infer trading category from a Polymarket condition_id or market title.
     Returns a normalized category string.
     """
     ticker_upper = ticker.upper()

@@ -1,5 +1,5 @@
 """
-Async publish/subscribe event bus for the Kalshi AI Trading Bot.
+Async publish/subscribe event bus for the Polymarket AI Trading Bot.
 Provides decoupled communication between WebSocket streams, position trackers,
 and trading strategies via typed events with automatic timestamping.
 """

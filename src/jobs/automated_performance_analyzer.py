@@ -3,7 +3,7 @@ Automated Performance Analysis System
 
 A production-ready system that automatically analyzes trading performance using Grok4,
 implements risk checks, tracks manual vs automated performance, and generates actionable
-recommendations based on the Kalshi trading system state.
+recommendations based on the Polymarket trading system state.
 
 Key Features:
 - Regular automated analysis using Grok4
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from enum import Enum
 import aiosqlite
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Position, TradeLog
 from src.config.settings import settings
@@ -89,13 +89,13 @@ class AutomatedPerformanceAnalyzer:
     
     def __init__(self):
         self.logger = get_trading_logger("automated_performance_analyzer")
-        self.kalshi_client = None
+        self.polymarket_client = None
         self.xai_client = None
         self.db = None
         
     async def initialize(self):
         """Initialize clients and database connections."""
-        self.kalshi_client = KalshiClient()
+        self.polymarket_client = PolymarketClient()
         self.xai_client = XAIClient()
         self.db = DatabaseManager()
         await self.db.initialize()
@@ -103,8 +103,8 @@ class AutomatedPerformanceAnalyzer:
     
     async def close(self):
         """Clean up connections."""
-        if self.kalshi_client:
-            await self.kalshi_client.close()
+        if self.polymarket_client:
+            await self.polymarket_client.close()
         if self.xai_client:
             await self.xai_client.close()
         self.logger.info("Automated Performance Analyzer closed")
@@ -165,15 +165,15 @@ class AutomatedPerformanceAnalyzer:
             raise
     
     async def _gather_portfolio_data(self) -> Dict[str, Any]:
-        """Gather current portfolio state from Kalshi API."""
-        self.logger.debug("Gathering portfolio data from Kalshi")
+        """Gather current portfolio state from Polymarket CLOB."""
+        self.logger.debug("Gathering portfolio data from Polymarket")
         
         # Get positions and balance
-        positions_response = await self.kalshi_client.get_positions()
-        balance_response = await self.kalshi_client.get_balance()
+        positions_response = await self.polymarket_client.get_positions()
+        balance_response = await self.polymarket_client.get_balance()
         
-        kalshi_positions = positions_response.get('market_positions', [])
-        active_positions = [p for p in kalshi_positions if p.get('position', 0) != 0]
+        polymarket_positions = positions_response.get('market_positions', [])
+        active_positions = [p for p in polymarket_positions if p.get('position', 0) != 0]
         
         return {
             'active_positions': len(active_positions),
@@ -388,7 +388,7 @@ class AutomatedPerformanceAnalyzer:
         
         # Prepare analysis prompt with current state
         analysis_prompt = f"""
-You are an expert quantitative trading analyst. Analyze this Kalshi prediction market trading system:
+You are an expert quantitative trading analyst. Analyze this Polymarket prediction markets trading system:
 
         **IMPORTANT DATA LIMITATION**: The trade_logs database only contains recent data from {getattr(self, 'trade_date_range', {}).get('earliest', 'today')} to {getattr(self, 'trade_date_range', {}).get('latest', 'today')}. Historical profitable manual trades are NOT included in this analysis.
 

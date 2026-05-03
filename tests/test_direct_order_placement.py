@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Direct Order Placement Test
-Bypasses AI evaluation and directly tests real order placement on Kalshi.
+Bypasses AI evaluation and directly tests real order placement on Polymarket.
 This ensures we can place REAL orders 100% of the time.
 """
 
@@ -15,7 +15,7 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.database import DatabaseManager, Position
 from src.utils.logging_setup import setup_logging
 from src.jobs.execute import execute_position
@@ -28,7 +28,7 @@ async def test_direct_order_placement():
     
     logger.info("🎯 Testing DIRECT real order placement (no AI, no simulation)")
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     db_manager = DatabaseManager()
     
     try:
@@ -36,7 +36,7 @@ async def test_direct_order_placement():
         
         # 1. Find a tradeable market
         logger.info("🔍 Finding tradeable markets...")
-        markets_response = await kalshi_client.get_markets(limit=200, status="open")
+        markets_response = await polymarket_client.get_markets(limit=200, status="open")
         markets = markets_response.get('markets', [])
         
         # Find markets with real liquidity
@@ -67,12 +67,12 @@ async def test_direct_order_placement():
         logger.info(f"   Prices: YES={yes_ask}¢, NO={no_ask}¢")
         
         # 2. Check current account balance
-        balance = await kalshi_client.get_balance()
+        balance = await polymarket_client.get_balance()
         available = balance.get('balance', 0)
         logger.info(f"💰 Available balance: ${available/100:.2f}")
         
         # 3. Check initial positions
-        initial_positions = await kalshi_client.get_positions()
+        initial_positions = await polymarket_client.get_positions()
         initial_position = 0
         for pos in initial_positions.get('market_positions', []):
             if pos.get('ticker') == ticker:
@@ -121,12 +121,12 @@ async def test_direct_order_placement():
         logger.info(f"✅ Position added to database with ID: {position_id}")
         
         # 7. Execute the REAL order
-        logger.info(f"🚀 Placing REAL order on Kalshi...")
+        logger.info(f"🚀 Placing REAL order on Polymarket...")
         success = await execute_position(
             position=position,
             live_mode=True,  # FORCE live mode - NO simulation
             db_manager=db_manager,
-            kalshi_client=kalshi_client
+            polymarket_client=polymarket_client
         )
         
         if not success:
@@ -139,7 +139,7 @@ async def test_direct_order_placement():
         await asyncio.sleep(3)
         
         logger.info("🔍 Checking if order was actually filled...")
-        final_positions = await kalshi_client.get_positions()
+        final_positions = await polymarket_client.get_positions()
         final_position = 0
         for pos in final_positions.get('market_positions', []):
             if pos.get('ticker') == ticker:
@@ -171,7 +171,7 @@ async def test_direct_order_placement():
             return True
         else:
             logger.error(f"❌ NO position change detected!")
-            logger.error(f"   Database shows success but Kalshi position unchanged")
+            logger.error(f"   Database shows success but Polymarket position unchanged")
             logger.error(f"   This suggests order was not actually placed")
             return False
         
@@ -182,11 +182,11 @@ async def test_direct_order_placement():
         return False
     
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
 
 if __name__ == "__main__":
     result = asyncio.run(test_direct_order_placement())
     if result:
-        print("🎉 DIRECT ORDER TEST PASSED! Real orders are being placed on Kalshi.")
+        print("🎉 DIRECT ORDER TEST PASSED! Real orders are being placed on Polymarket.")
     else:
         print("💥 DIRECT ORDER TEST FAILED! Orders are still not being placed properly.") 

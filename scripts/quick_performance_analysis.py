@@ -5,7 +5,7 @@ import sys
 import json
 sys.path.append('.')
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager
 import aiosqlite
@@ -18,7 +18,7 @@ async def run_quick_analysis():
     print("=" * 60)
     
     # Initialize clients
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     xai_client = XAIClient()
     db = DatabaseManager()
     await db.initialize()
@@ -27,13 +27,13 @@ async def run_quick_analysis():
         # 1. Gather current portfolio data
         print("\n📊 Gathering portfolio data...")
         
-        # Kalshi positions
-        positions_response = await kalshi_client.get_positions()
-        kalshi_positions = positions_response.get('market_positions', [])
-        active_positions = [p for p in kalshi_positions if p.get('position', 0) != 0]
+        # Polymarket positions
+        positions_response = await polymarket_client.get_positions()
+        polymarket_positions = positions_response.get('market_positions', [])
+        active_positions = [p for p in polymarket_positions if p.get('position', 0) != 0]
         
         # Balance
-        balance_response = await kalshi_client.get_balance()
+        balance_response = await polymarket_client.get_balance()
         available_cash = balance_response.get('balance', 0) / 100
         
         # 2. Get historical performance
@@ -75,7 +75,7 @@ async def run_quick_analysis():
         
         # 3. Prepare analysis prompt for Grok4
         analysis_prompt = f"""
-You are an expert quantitative trading analyst reviewing a Kalshi prediction market trading system.
+You are an expert quantitative trading analyst reviewing a Polymarket prediction markets trading system.
 
 CURRENT PORTFOLIO STATE:
 - Active Positions: {len(active_positions)} markets
@@ -179,7 +179,7 @@ Focus on actionable insights that can immediately improve the trading system.
             print("5. [LOW] Enable live trading only after demonstrating consistent profitability")
         
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
         await xai_client.close()
 
 if __name__ == "__main__":

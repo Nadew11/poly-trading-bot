@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import aiosqlite
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Position, TradeLog
 from src.config.settings import settings
@@ -30,9 +30,9 @@ class TradingPerformanceAnalyzer:
     - Edge detection accuracy
     """
     
-    def __init__(self, db_manager: DatabaseManager, kalshi_client: KalshiClient, xai_client: XAIClient):
+    def __init__(self, db_manager: DatabaseManager, polymarket_client: PolymarketClient, xai_client: XAIClient):
         self.db_manager = db_manager
-        self.kalshi_client = kalshi_client
+        self.polymarket_client = polymarket_client
         self.xai_client = xai_client
         self.logger = get_trading_logger("performance_analyzer")
     
@@ -72,13 +72,13 @@ class TradingPerformanceAnalyzer:
         
         # 1. Current Portfolio State
         try:
-            # Kalshi positions
-            positions_response = await self.kalshi_client.get_positions()
-            kalshi_positions = positions_response.get('market_positions', [])
-            active_positions = [p for p in kalshi_positions if p.get('position', 0) != 0]
+            # Polymarket positions
+            positions_response = await self.polymarket_client.get_positions()
+            polymarket_positions = positions_response.get('market_positions', [])
+            active_positions = [p for p in polymarket_positions if p.get('position', 0) != 0]
             
             # Portfolio value
-            balance_response = await self.kalshi_client.get_balance()
+            balance_response = await self.polymarket_client.get_balance()
             available_cash = balance_response.get('balance', 0) / 100
             
             data['portfolio'] = {
@@ -134,35 +134,35 @@ class TradingPerformanceAnalyzer:
                 
                 # Calculate unrealized P&L for current positions
                 cursor = await db.execute("""
-                     SELECT 
-                         COUNT(*) as open_positions,
-                         SUM(entry_price * quantity) as total_exposure
-                     FROM positions 
-                     WHERE status = 'open'
-                 """)
-                 open_position_stats = await cursor.fetchone()
-                 
-                 data['performance'] = {
-                     'overall_stats': {
-                         'total_trades': trade_stats[0] if trade_stats else 0,
-                         'winning_trades': trade_stats[1] if trade_stats else 0,
-                         'win_rate': (trade_stats[1] / trade_stats[0]) if trade_stats and trade_stats[0] > 0 else 0,
-                         'avg_pnl': trade_stats[2] if trade_stats else 0,
-                         'total_pnl': trade_stats[3] if trade_stats else 0,
-                         'worst_loss': trade_stats[4] if trade_stats else 0,
-                         'best_win': trade_stats[5] if trade_stats else 0
-                     },
-                     'position_distribution': dict(position_stats) if position_stats else {},
-                     'open_positions': {
-                         'count': open_position_stats[0] if open_position_stats else 0,
-                         'total_exposure': open_position_stats[1] if open_position_stats else 0
-                     },
-                     'recent_performance': {
-                         'trades_last_7d': recent_stats[0] if recent_stats else 0,
-                         'avg_pnl_last_7d': recent_stats[1] if recent_stats else 0,
-                         'wins_last_7d': recent_stats[2] if recent_stats else 0
-                     }
-                 }
+                    SELECT
+                        COUNT(*) as open_positions,
+                        SUM(entry_price * quantity) as total_exposure
+                    FROM positions
+                    WHERE status = 'open'
+                """)
+                open_position_stats = await cursor.fetchone()
+
+                data['performance'] = {
+                    'overall_stats': {
+                        'total_trades': trade_stats[0] if trade_stats else 0,
+                        'winning_trades': trade_stats[1] if trade_stats else 0,
+                        'win_rate': (trade_stats[1] / trade_stats[0]) if trade_stats and trade_stats[0] > 0 else 0,
+                        'avg_pnl': trade_stats[2] if trade_stats else 0,
+                        'total_pnl': trade_stats[3] if trade_stats else 0,
+                        'worst_loss': trade_stats[4] if trade_stats else 0,
+                        'best_win': trade_stats[5] if trade_stats else 0
+                    },
+                    'position_distribution': dict(position_stats) if position_stats else {},
+                    'open_positions': {
+                        'count': open_position_stats[0] if open_position_stats else 0,
+                        'total_exposure': open_position_stats[1] if open_position_stats else 0
+                    },
+                    'recent_performance': {
+                        'trades_last_7d': recent_stats[0] if recent_stats else 0,
+                        'avg_pnl_last_7d': recent_stats[1] if recent_stats else 0,
+                        'wins_last_7d': recent_stats[2] if recent_stats else 0
+                    }
+                }
                 
         except Exception as e:
             self.logger.warning(f"Error gathering performance data: {e}")
@@ -206,7 +206,7 @@ class TradingPerformanceAnalyzer:
         """Use Grok4 to analyze performance data and generate insights."""
         
         analysis_prompt = f"""
-You are an expert quantitative trading analyst reviewing a Kalshi prediction market trading system. 
+You are an expert quantitative trading analyst reviewing a Polymarket prediction markets trading system. 
 
 Analyze this performance data and provide actionable insights:
 
@@ -353,7 +353,7 @@ Focus on actionable insights that can immediately improve performance.
 
 async def run_performance_analysis(
     db_manager: Optional[DatabaseManager] = None,
-    kalshi_client: Optional[KalshiClient] = None,
+    polymarket_client: Optional[PolymarketClient] = None,
     xai_client: Optional[XAIClient] = None
 ) -> Dict[str, Any]:
     """
@@ -370,14 +370,14 @@ async def run_performance_analysis(
         db_manager = DatabaseManager()
         await db_manager.initialize()
     
-    if kalshi_client is None:
-        kalshi_client = KalshiClient()
+    if polymarket_client is None:
+        polymarket_client = PolymarketClient()
     
     if xai_client is None:
         xai_client = XAIClient()
     
     try:
-        analyzer = TradingPerformanceAnalyzer(db_manager, kalshi_client, xai_client)
+        analyzer = TradingPerformanceAnalyzer(db_manager, polymarket_client, xai_client)
         report = await analyzer.run_comprehensive_analysis()
         
         logger.info("✅ Performance analysis completed successfully")
@@ -388,5 +388,5 @@ async def run_performance_analysis(
         return {}
     
     finally:
-        if kalshi_client:
-            await kalshi_client.close() 
+        if polymarket_client:
+            await polymarket_client.close() 

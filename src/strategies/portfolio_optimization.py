@@ -32,7 +32,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from src.utils.database import DatabaseManager, Market, Position
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.clients.xai_client import XAIClient
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
@@ -99,11 +99,11 @@ class AdvancedPortfolioOptimizer:
     def __init__(
         self,
         db_manager: DatabaseManager,
-        kalshi_client: KalshiClient,
+        polymarket_client: PolymarketClient,
         xai_client: XAIClient
     ):
         self.db_manager = db_manager
-        self.kalshi_client = kalshi_client
+        self.polymarket_client = polymarket_client
         self.xai_client = xai_client
         self.logger = get_trading_logger("portfolio_optimizer")
         
@@ -818,7 +818,7 @@ class AdvancedPortfolioOptimizer:
 async def create_market_opportunities_from_markets(
     markets: List[Market],
     xai_client: XAIClient,
-    kalshi_client: KalshiClient,
+    polymarket_client: PolymarketClient,
     db_manager: DatabaseManager = None,
     total_capital: float = 10000
 ) -> List[MarketOpportunity]:
@@ -838,7 +838,7 @@ async def create_market_opportunities_from_markets(
     for market in markets:
         try:
             # Get current market data
-            market_data = await kalshi_client.get_market(market.market_id)
+            market_data = await polymarket_client.get_market(market.market_id)
             if not market_data:
                 continue
             
@@ -908,7 +908,7 @@ async def create_market_opportunities_from_markets(
                 
                 # 🚀 IMMEDIATE TRADING: Place trade for strong opportunities
                 if db_manager:
-                    await _evaluate_immediate_trade(opportunity, db_manager, kalshi_client, total_capital)
+                    await _evaluate_immediate_trade(opportunity, db_manager, polymarket_client, total_capital)
             else:
                 logger.info(f"❌ EDGE FILTERED: {market.market_id} - {edge_result.reason}")
             
@@ -922,7 +922,7 @@ async def create_market_opportunities_from_markets(
 async def _evaluate_immediate_trade(
     opportunity: MarketOpportunity, 
     db_manager: DatabaseManager, 
-    kalshi_client: KalshiClient, 
+    polymarket_client: PolymarketClient, 
     total_capital: float
 ) -> None:
     """
@@ -964,15 +964,15 @@ async def _evaluate_immediate_trade(
         
         # Get portfolio value for position sizing
         try:
-            balance_response = await kalshi_client.get_balance()
+            balance_response = await polymarket_client.get_balance()
             available_cash = balance_response.get('balance', 0) / 100  # Convert cents to dollars
             
             # Get current positions to calculate total portfolio value
-            # Kalshi API v2 returns portfolio_value in balance response (in cents)
+            # Polymarket CLOB v2 returns portfolio_value in balance response (in cents)
             total_position_value = balance_response.get('portfolio_value', 0) / 100  # Convert cents to dollars
 
             # Log active positions for visibility
-            positions_response = await kalshi_client.get_positions()
+            positions_response = await polymarket_client.get_positions()
             event_positions = positions_response.get('event_positions', []) if isinstance(positions_response, dict) else []
             active_positions = [p for p in event_positions if float(p.get('event_exposure_dollars', '0')) > 0]
             if active_positions:
@@ -1011,7 +1011,7 @@ async def _evaluate_immediate_trade(
         
         # Check position limits with actual calculated size
         can_add_position, limit_reason = await check_can_add_position(
-            initial_position_size, db_manager, kalshi_client
+            initial_position_size, db_manager, polymarket_client
         )
         
         if not can_add_position:
@@ -1022,7 +1022,7 @@ async def _evaluate_immediate_trade(
             for reduction_factor in [0.8, 0.6, 0.4, 0.2, 0.1]:
                 reduced_position_size = initial_position_size * reduction_factor
                 can_add_reduced, reduced_reason = await check_can_add_position(
-                    reduced_position_size, db_manager, kalshi_client
+                    reduced_position_size, db_manager, polymarket_client
                 )
                 
                 if can_add_reduced:
@@ -1032,7 +1032,7 @@ async def _evaluate_immediate_trade(
             else:
                 # If even the smallest size doesn't fit, check if it's due to position count
                 from src.utils.position_limits import PositionLimitsManager
-                limits_manager = PositionLimitsManager(db_manager, kalshi_client)
+                limits_manager = PositionLimitsManager(db_manager, polymarket_client)
                 current_positions = await limits_manager._get_position_count()
                 
                 if current_positions >= limits_manager.max_positions:
@@ -1070,7 +1070,7 @@ async def _evaluate_immediate_trade(
         from src.utils.cash_reserves import check_can_trade_with_cash_reserves
         
         can_trade_reserves, reserves_reason = await check_can_trade_with_cash_reserves(
-            position_size, db_manager, kalshi_client
+            position_size, db_manager, polymarket_client
         )
         
         if not can_trade_reserves:
@@ -1134,7 +1134,7 @@ async def _evaluate_immediate_trade(
         
         # 🚨 VALIDATE MARKET IS STILL TRADEABLE before executing
         try:
-            market_data = await kalshi_client.get_market(opportunity.market_id)
+            market_data = await polymarket_client.get_market(opportunity.market_id)
             
             # FIXED: Extract from nested 'market' object in API response
             market_info = market_data.get('market', {})
@@ -1143,7 +1143,7 @@ async def _evaluate_immediate_trade(
             
             logger.info(f"🔍 Market validation for {opportunity.market_id}: status={market_status}, YES={yes_ask:.4f}, NO={no_ask:.4f}")
             
-            # FIXED: Kalshi uses 'active' for tradeable markets, not 'open'
+            # FIXED: Polymarket uses 'active' for tradeable markets, not 'open'
             if market_status not in ['active', 'open']:
                 logger.warning(f"⏭️ Skipping {opportunity.market_id} - Market status: {market_status} (not active/open)")
                 return
@@ -1174,7 +1174,7 @@ async def _evaluate_immediate_trade(
             
             # Execute the trade - respect the global trading mode setting
             live_mode = getattr(settings.trading, 'live_trading_enabled', False)
-            success = await execute_position(position, live_mode, db_manager, kalshi_client)
+            success = await execute_position(position, live_mode, db_manager, polymarket_client)
             if success:
                 logger.info(f"✅ IMMEDIATE TRADE EXECUTED: {opportunity.market_id} - ${position_size:.0f} position")
             else:
@@ -1279,7 +1279,7 @@ async def _get_fast_ai_prediction(
 
 async def run_portfolio_optimization(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient,
+    polymarket_client: PolymarketClient,
     xai_client: XAIClient
 ) -> PortfolioAllocation:
     """
@@ -1289,7 +1289,7 @@ async def run_portfolio_optimization(
     
     try:
         # Initialize optimizer
-        optimizer = AdvancedPortfolioOptimizer(db_manager, kalshi_client, xai_client)
+        optimizer = AdvancedPortfolioOptimizer(db_manager, polymarket_client, xai_client)
         
         # Get markets
         markets = await db_manager.get_eligible_markets(
@@ -1302,7 +1302,7 @@ async def run_portfolio_optimization(
         
         # Convert to opportunities (no immediate trading in batch mode)
         opportunities = await create_market_opportunities_from_markets(
-            markets, xai_client, kalshi_client, None, 0
+            markets, xai_client, polymarket_client, None, 0
         )
         
         if not opportunities:
@@ -1324,4 +1324,4 @@ async def run_portfolio_optimization(
         
     except Exception as e:
         logger.error(f"Error in portfolio optimization: {e}")
-        return AdvancedPortfolioOptimizer(db_manager, kalshi_client, xai_client)._empty_allocation() 
+        return AdvancedPortfolioOptimizer(db_manager, polymarket_client, xai_client)._empty_allocation() 

@@ -36,7 +36,7 @@ A comprehensive Streamlit-based dashboard for monitoring and analyzing all aspec
 - **Strategy risk**: Risk breakdown by trading approach
 
 ### 🔧 System Health
-- **Connection status**: Kalshi API, database, LLM integration
+- **Connection status**: Polymarket CLOB, database, LLM integration
 - **Activity timeline**: Recent system events and queries
 - **Configuration**: Current system settings
 - **Recommendations**: Automated system optimization suggestions
@@ -104,7 +104,7 @@ The dashboard automatically tracks and displays:
 
 Strategy: quick_flip_scalping
 Type: movement_prediction  
-Market: KXELECTION-2024-TRUMP
+Market: <polymarket_condition_id>
 
 Prompt: "QUICK SCALP ANALYSIS for Will Trump win 2024..."
 
@@ -205,7 +205,7 @@ The dashboard is responsive and works on:
 ### Troubleshooting
 - **Missing data**: Ensure trading system is running and database is accessible
 - **Slow loading**: Check database size and consider archiving old data
-- **Connection issues**: Verify Kalshi API credentials and connectivity
+- **Connection issues**: Verify Polymarket CLOB credentials and connectivity
 - **LLM data**: New queries will appear after strategies run with updated clients
 
 ## 🆘 Support

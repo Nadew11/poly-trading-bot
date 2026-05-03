@@ -1,6 +1,6 @@
-# 🎯 Kalshi Automated Performance Analysis System
+# 🎯 Polymarket Automated Performance Analysis System
 
-A comprehensive, AI-powered performance analysis and risk management system for the Kalshi prediction market trading platform. This system provides real-time monitoring, automated analysis using Grok4, and actionable recommendations to optimize trading performance.
+A comprehensive, AI-powered performance analysis and risk management system for the Polymarket prediction markets trading platform. This system provides real-time monitoring, automated analysis using Grok4, and actionable recommendations to optimize trading performance.
 
 ## 🚀 **System Overview**
 

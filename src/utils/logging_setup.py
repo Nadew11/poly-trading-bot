@@ -1,5 +1,5 @@
 """
-Logging setup for the Kalshi trading system.
+Logging setup for the Polymarket trading system.
 Provides structured logging with file rotation and multiple output targets.
 """
 
@@ -126,7 +126,7 @@ def log_trade_execution(
     
     Args:
         action: Trade action (BUY, SELL, CANCEL)
-        market_id: Kalshi market identifier
+        market_id: Polymarket market identifier
         amount: Trade amount
         price: Trade price (if applicable)
         confidence: AI confidence level
@@ -157,7 +157,7 @@ def log_market_analysis(
     Log market analysis results.
     
     Args:
-        market_id: Kalshi market identifier
+        market_id: Polymarket market identifier
         analysis_result: AI analysis result
         processing_time: Time taken for analysis
         cost: Cost of analysis

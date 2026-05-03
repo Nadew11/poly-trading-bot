@@ -1,18 +1,55 @@
 # Changelog
 
-All notable changes to the Kalshi AI Trading Bot project will be documented in this file.
+All notable changes to the Polymarket AI Trading Bot project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Migration to Polymarket
+- **New** `src/clients/polymarket_client.py` — async wrapper over `py-clob-client` mirroring the legacy exchange interface (1:1 method signatures so existing strategies port without changes)
+- **New** `src/clients/gamma_client.py` — Polymarket Gamma API for market discovery (separate from CLOB; uses `/events` so category tags survive)
+- **New** `src/clients/__init__.py` factory `build_polymarket_clients()` — async context manager wiring CLOB + Gamma together
+- **New** `scripts/set_allowances.py` — idempotent USDC + ERC1155 allowance provisioning, dry-run by default
+- **New** `scripts/dry_run_smoke.py` — end-to-end pipeline check against live Gamma+CLOB without sending an order
+- **New** `tests/test_polymarket_client.py` (31 unit tests, all passing) and `tests/test_safe_compounder.py` (mocked end-to-end)
+- **New** persistent token-id cache at `data/token_cache.json` to skip Gamma round-trip on cold-start orders
+- **New** `cli.py health --full` flag — gates the slow EIP-712 signing check so routine health checks don't burn rate-limit
+- **New** Polygon-wallet address shown in Streamlit dashboard sidebar with PolygonScan link
+
+### Changed
+- `cli.py` health/status/close-all all rewritten for Polymarket: USDC.e on Polygon, condition_id instead of ticker, dollars instead of cents, Polymarket order-book shape
+- `src/jobs/ingest.py` — discovery via Gamma; YES/NO token_ids + `neg_risk` + `tick_size` registered on the client at ingest time so order placement routes correctly without re-fetch
+- `src/jobs/{decide,execute,track,trade}.py` — switched from legacy exchange client to `PolymarketClient`
+- `src/strategies/safe_compounder.py` — KX-prefix skiplist replaced with Polymarket tag exclusion via `GammaClient.resolve_tag_slugs`; orderbook + place_order calls now go through Polymarket adapter
+- `place_order` now passes `PartialCreateOrderOptions(tick_size, neg_risk)` to the SDK so neg-risk markets route to the right CTF exchange
+- `get_balance` includes mark-to-market on open positions in the `portfolio_value` field (was always 0)
+- `position_limits.py` and `cash_reserves.py` — fixed pre-existing bug reading `'positions'` instead of `'market_positions'` (silently disabled the entire position-value calculation)
+- `env.template` rewritten with `POLYMARKET_*` keys and a `DRY_RUN=true` default
+- `requirements.txt` / `pyproject.toml` — added `py-clob-client`, `web3`, `eth-account`; dropped unused `xai_sdk`
+- Streamlit dashboard reads `current_price` directly from the data API (1 round-trip instead of N per-position market fetches)
+- Allowance threshold lowered from 10M USDC to 10k (still much higher than typical bot capital, far less misleading)
+
+### Removed
+- `src/clients/kalshi_client.py` and `src/clients/kalshi_ws.py` archived to `*.legacy.bak`
+- All authenticated calls to the legacy exchange API
+- Hardcoded "Kalshi" mentions across docstrings, comments, prompts, dashboards, and READMEs
+
+### Fixed
+- 4 mismatches between `polymarket_client.py` assumptions and the actual `py-clob-client` SDK surface (BUY/SELL import path, `OpenOrderParams`/`TradeParams` wrappers, `get_positions` not in SDK — now uses Polymarket Data API directly)
+- Indentation bug in `src/jobs/performance_analyzer.py` lines 137-165 that made the module fail to import
+- `tests/conftest.py` now auto-skips test modules whose hard deps aren't installed instead of erroring out the entire collection
+- Token-id cache isolation in tests via session-level fixture so test runs don't pollute the working tree
+
+## [1.0.0-pre-migration]
+
 ### Added
-- Initial public release of Kalshi AI Trading Bot
+- Initial public release of Polymarket AI Trading Bot
 - Multi-agent AI decision engine with Forecaster, Critic, and Trader agents
 - Real-time market scanning and analysis
 - Portfolio optimization using Kelly Criterion and risk parity
-- Live trading integration with Kalshi API
+- Live trading integration with Polymarket CLOB
 - Web-based dashboard for monitoring and control
 - Performance analytics and reporting
 - Market making strategy implementation

@@ -11,14 +11,14 @@ from typing import Optional, Dict
 from src.utils.database import DatabaseManager, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
-from src.clients.kalshi_client import KalshiClient, KalshiAPIError
+from src.clients.polymarket_client import PolymarketClient, PolymarketAPIError
 from src.utils.market_prices import get_market_prices, is_tradeable_market
 
 async def execute_position(
     position: Position, 
     live_mode: bool, 
     db_manager: DatabaseManager, 
-    kalshi_client: KalshiClient
+    polymarket_client: PolymarketClient
 ) -> bool:
     """
     Executes a single trade position.
@@ -27,7 +27,7 @@ async def execute_position(
         position: The position to execute.
         live_mode: Whether to execute a live or simulated trade.
         db_manager: The database manager instance.
-        kalshi_client: The Kalshi client instance.
+        polymarket_client: The Polymarket client instance.
         
     Returns:
         True if execution was successful, False otherwise.
@@ -40,7 +40,7 @@ async def execute_position(
         logger.warning(f"💰 PLACING LIVE ORDER - Real money will be used for {position.market_id}")
         try:
             # Get current market prices to determine the appropriate price field
-            market_data = await kalshi_client.get_market(position.market_id)
+            market_data = await polymarket_client.get_market(position.market_id)
             market = market_data.get('market', {})
             
             # For market orders, use the ask price based on which side we're buying
@@ -76,14 +76,14 @@ async def execute_position(
                 return False
 
             # Guard 2: Reject any price that would convert to 0¢ or >= 100¢ — these
-            # are outside the valid Kalshi order range and will be rejected by the API.
+            # are outside the valid Polymarket order range and will be rejected by the API.
             ask_dollars = yes_ask_dollars if side_lower == "yes" else no_ask_dollars
             ask_cents = int(round(ask_dollars * 100))
             if ask_cents <= 0 or ask_cents >= 100:
                 logger.warning(
                     f"⚠️  Skipping {position.market_id}: {side_lower} ask price "
                     f"{ask_dollars:.4f} converts to {ask_cents}¢ which is outside the "
-                    "valid Kalshi range (1–99¢). Cannot place order (issue #42)."
+                    "valid Polymarket range (1–99¢). Cannot place order (issue #42)."
                 )
                 return False
             # --- End price sanity checks ---
@@ -110,7 +110,7 @@ async def execute_position(
                 order_params["no_price"] = no_ask_cents
             
             logger.info(f"Placing order with params: {order_params}")
-            order_response = await kalshi_client.place_order(**order_params)
+            order_response = await polymarket_client.place_order(**order_params)
             
             # For a market order, the fill price is not guaranteed.
             # A more robust implementation would query the /fills endpoint
@@ -123,7 +123,7 @@ async def execute_position(
             logger.info(f"💰 Real money used: ${position.quantity * fill_price:.2f}")
             return True
 
-        except KalshiAPIError as e:
+        except PolymarketAPIError as e:
             logger.error(f"❌ FAILED to place LIVE order for {position.market_id}: {e}")
             return False
     else:
@@ -138,7 +138,7 @@ async def place_sell_limit_order(
     position: Position,
     limit_price: float,
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient
+    polymarket_client: PolymarketClient
 ) -> bool:
     """
     Place a sell limit order to close an existing position.
@@ -147,7 +147,7 @@ async def place_sell_limit_order(
         position: The position to close
         limit_price: The limit price for the sell order (in dollars)
         db_manager: Database manager
-        kalshi_client: Kalshi API client
+        polymarket_client: Polymarket CLOB client
     
     Returns:
         True if order placed successfully, False otherwise
@@ -158,7 +158,7 @@ async def place_sell_limit_order(
         import uuid
         client_order_id = str(uuid.uuid4())
         
-        # Convert price to cents for Kalshi API
+        # Convert price to cents for Polymarket CLOB
         limit_price_cents = int(limit_price * 100)
         
         # For sell orders, we need to use the opposite side logic:
@@ -184,7 +184,7 @@ async def place_sell_limit_order(
         logger.info(f"🎯 Placing SELL LIMIT order: {position.quantity} {side.upper()} at {limit_price_cents}¢ for {position.market_id}")
         
         # Place the sell limit order
-        response = await kalshi_client.place_order(**order_params)
+        response = await polymarket_client.place_order(**order_params)
         
         if response and 'order' in response:
             order_id = response['order'].get('order_id', client_order_id)
@@ -208,7 +208,7 @@ async def place_sell_limit_order(
 
 async def place_profit_taking_orders(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient,
+    polymarket_client: PolymarketClient,
     profit_threshold: float = 0.25  # 25% profit target
 ) -> Dict[str, int]:
     """
@@ -216,7 +216,7 @@ async def place_profit_taking_orders(
     
     Args:
         db_manager: Database manager
-        kalshi_client: Kalshi API client
+        polymarket_client: Polymarket CLOB client
         profit_threshold: Minimum profit percentage to trigger sell order
     
     Returns:
@@ -241,7 +241,7 @@ async def place_profit_taking_orders(
                 results['positions_processed'] += 1
                 
                 # Get current market data
-                market_response = await kalshi_client.get_market(position.market_id)
+                market_response = await polymarket_client.get_market(position.market_id)
                 market_data = market_response.get('market', {})
                 
                 if not market_data:
@@ -273,7 +273,7 @@ async def place_profit_taking_orders(
                             position=position,
                             limit_price=sell_price,
                             db_manager=db_manager,
-                            kalshi_client=kalshi_client
+                            polymarket_client=polymarket_client
                         )
                         
                         if success:
@@ -296,7 +296,7 @@ async def place_profit_taking_orders(
 
 async def place_stop_loss_orders(
     db_manager: DatabaseManager,
-    kalshi_client: KalshiClient,
+    polymarket_client: PolymarketClient,
     stop_loss_threshold: float = -0.10  # 10% stop loss
 ) -> Dict[str, int]:
     """
@@ -304,7 +304,7 @@ async def place_stop_loss_orders(
     
     Args:
         db_manager: Database manager
-        kalshi_client: Kalshi API client
+        polymarket_client: Polymarket CLOB client
         stop_loss_threshold: Maximum loss percentage before triggering stop loss
     
     Returns:
@@ -329,7 +329,7 @@ async def place_stop_loss_orders(
                 results['positions_processed'] += 1
                 
                 # Get current market data
-                market_response = await kalshi_client.get_market(position.market_id)
+                market_response = await polymarket_client.get_market(position.market_id)
                 market_data = market_response.get('market', {})
                 
                 if not market_data:
@@ -360,7 +360,7 @@ async def place_stop_loss_orders(
                             position=position,
                             limit_price=stop_price,
                             db_manager=db_manager,
-                            kalshi_client=kalshi_client
+                            polymarket_client=polymarket_client
                         )
                         
                         if success:

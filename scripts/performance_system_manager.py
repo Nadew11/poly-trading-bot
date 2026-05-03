@@ -3,7 +3,7 @@
 """
 Performance System Manager
 
-Comprehensive orchestration system for the automated Kalshi trading performance analyzer.
+Comprehensive orchestration system for the automated Polymarket trading performance analyzer.
 This is the main entry point for managing the entire performance analysis ecosystem.
 
 Features:
@@ -48,7 +48,7 @@ class PerformanceSystemManager:
     Main orchestrator for the automated performance analysis system.
     
     Manages the complete lifecycle of performance monitoring, analysis,
-    and intervention capabilities for the Kalshi trading system.
+    and intervention capabilities for the Polymarket trading system.
     """
     
     def __init__(self):
@@ -58,7 +58,7 @@ class PerformanceSystemManager:
         
     async def start_system(self, config: Optional[ScheduleConfig] = None) -> None:
         """Start the complete performance analysis system."""
-        self.logger.info("🚀 Starting Kalshi Performance Analysis System")
+        self.logger.info("🚀 Starting Polymarket Performance Analysis System")
         
         try:
             # Start the automated scheduler
@@ -77,7 +77,7 @@ class PerformanceSystemManager:
             
             # Display startup summary
             print(f"\n{'='*60}")
-            print("🎯 KALSHI PERFORMANCE ANALYSIS SYSTEM ACTIVE")
+            print("🎯 POLYMARKET PERFORMANCE ANALYSIS SYSTEM ACTIVE")
             print(f"{'='*60}")
             print(f"System Status: {initial_summary['system_status']}")
             print(f"Health Score: {initial_summary['metrics']['health_score']:.1f}/100")
@@ -321,7 +321,7 @@ async def main():
     setup_logging("INFO")
     
     parser = argparse.ArgumentParser(
-        description="Kalshi Trading Performance Analysis System",
+        description="Polymarket Trading Performance Analysis System",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

@@ -25,8 +25,8 @@ async def get_position_by_market_id_any_status(db_manager: DatabaseManager, mark
             return Position(**position_dict)
         return None
 
-@patch('src.jobs.track.KalshiClient')
-async def test_run_tracking_closes_position(mock_kalshi_client):
+@patch('src.jobs.track.PolymarketClient')
+async def test_run_tracking_closes_position(mock_polymarket_client):
     """
     Test that the tracking job correctly identifies a closed market,
     updates the position status, and creates a trade log.
@@ -53,8 +53,8 @@ async def test_run_tracking_closes_position(mock_kalshi_client):
     position_id = await db_manager.add_position(test_position)
     test_position.id = position_id
 
-    # Mock the KalshiClient to return a closed market that resolved to 'YES'
-    mock_api = mock_kalshi_client.return_value
+    # Mock the PolymarketClient to return a closed market that resolved to 'YES'
+    mock_api = mock_polymarket_client.return_value
     mock_api.get_market = AsyncMock(return_value={
         "market": {
             "status": "closed",
@@ -96,9 +96,9 @@ async def test_run_tracking_closes_position(mock_kalshi_client):
 
 
 @patch('src.jobs.execute.place_sell_limit_order', new_callable=AsyncMock)
-@patch('src.jobs.track.KalshiClient')
+@patch('src.jobs.track.PolymarketClient')
 async def test_non_resolution_exit_requires_successful_sell(
-    mock_kalshi_client, mock_place_sell
+    mock_polymarket_client, mock_place_sell
 ):
     """
     Regression for #49: a take-profit / stop-loss exit on an active market
@@ -129,7 +129,7 @@ async def test_non_resolution_exit_requires_successful_sell(
     test_position.id = position_id
 
     # Active market; YES price has reached our take-profit target.
-    mock_api = mock_kalshi_client.return_value
+    mock_api = mock_polymarket_client.return_value
     mock_api.get_market = AsyncMock(return_value={
         "market": {
             "status": "active",
@@ -167,9 +167,9 @@ async def test_non_resolution_exit_requires_successful_sell(
 
 
 @patch('src.jobs.execute.place_sell_limit_order', new_callable=AsyncMock)
-@patch('src.jobs.track.KalshiClient')
+@patch('src.jobs.track.PolymarketClient')
 async def test_non_resolution_exit_closes_after_successful_sell(
-    mock_kalshi_client, mock_place_sell
+    mock_polymarket_client, mock_place_sell
 ):
     """
     Companion to the above: when the sell order *does* succeed, the
@@ -198,7 +198,7 @@ async def test_non_resolution_exit_closes_after_successful_sell(
     position_id = await db_manager.add_position(test_position)
     test_position.id = position_id
 
-    mock_api = mock_kalshi_client.return_value
+    mock_api = mock_polymarket_client.return_value
     mock_api.get_market = AsyncMock(return_value={
         "market": {
             "status": "active",

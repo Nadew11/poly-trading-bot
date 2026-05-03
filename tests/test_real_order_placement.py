@@ -2,7 +2,7 @@
 """
 Test Real Order Placement
 Comprehensive test to verify our order placement functionality actually works.
-Based on Kalshi API documentation: https://trading-api.readme.io/reference/createorder-1
+Based on Polymarket CLOB documentation: https://docs.polymarket.com
 """
 
 import asyncio
@@ -14,7 +14,7 @@ import os
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.logging_setup import setup_logging
 
 async def test_order_placement_flow():
@@ -25,17 +25,17 @@ async def test_order_placement_flow():
     
     logger.info("🎯 Testing REAL order placement functionality")
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     
     try:
         # 1. Get account balance
-        balance = await kalshi_client.get_balance()
+        balance = await polymarket_client.get_balance()
         available = balance.get('balance', 0)
         logger.info(f"💰 Available balance: ${available/100:.2f}")
         
         # 2. Find an active market with good liquidity
         logger.info("🔍 Finding active market for testing...")
-        markets_response = await kalshi_client.get_markets(limit=100)
+        markets_response = await polymarket_client.get_markets(limit=100)
         markets = markets_response.get('markets', [])
         
         test_market = None
@@ -61,7 +61,7 @@ async def test_order_placement_flow():
         
         # 3. Get detailed orderbook
         logger.info("📊 Getting orderbook data...")
-        orderbook = await kalshi_client.get_orderbook(ticker)
+        orderbook = await polymarket_client.get_orderbook(ticker)
         
         yes_bids = orderbook.get('yes', [])
         no_bids = orderbook.get('no', [])
@@ -79,7 +79,7 @@ async def test_order_placement_flow():
         logger.info(f"🚀 Placing LIMIT order: {quantity} {side.upper()} at {safe_price}¢")
         
         client_order_id = str(uuid.uuid4())
-        order_response = await kalshi_client.place_order(
+        order_response = await polymarket_client.place_order(
             ticker=ticker,
             client_order_id=client_order_id,
             side=side,
@@ -97,7 +97,7 @@ async def test_order_placement_flow():
         await asyncio.sleep(1)
         logger.info("🔍 Checking if order appears in orders list...")
         
-        orders = await kalshi_client.get_orders()
+        orders = await polymarket_client.get_orders()
         placed_order = None
         for order in orders.get('orders', []):
             if order.get('order_id') == order_id:
@@ -112,14 +112,14 @@ async def test_order_placement_flow():
         
         # 6. Cancel the order
         logger.info(f"🗑️ Cancelling order {order_id}...")
-        cancel_response = await kalshi_client.cancel_order(order_id)
+        cancel_response = await polymarket_client.cancel_order(order_id)
         logger.info(f"✅ Order cancelled: {cancel_response}")
         
         # 7. Verify order was cancelled
         await asyncio.sleep(1)
         logger.info("🔍 Verifying order cancellation...")
         
-        updated_orders = await kalshi_client.get_orders()
+        updated_orders = await polymarket_client.get_orders()
         cancelled_order = None
         for order in updated_orders.get('orders', []):
             if order.get('order_id') == order_id:
@@ -145,25 +145,25 @@ async def test_order_placement_flow():
         return False
     
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
 
 async def test_database_sync():
-    """Test that our database stays in sync with actual Kalshi positions."""
+    """Test that our database stays in sync with actual Polymarket positions."""
     
     logger = logging.getLogger("db_sync_test")
-    logger.info("🔄 Testing database synchronization with Kalshi portfolio")
+    logger.info("🔄 Testing database synchronization with Polymarket portfolio")
     
     from src.utils.database import DatabaseManager
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     db_manager = DatabaseManager()
     
     try:
         await db_manager.initialize()
         
-        # Get actual Kalshi positions
-        kalshi_positions = await kalshi_client.get_positions()
-        kalshi_markets = {pos['ticker']: pos['position'] for pos in kalshi_positions.get('market_positions', [])}
+        # Get actual Polymarket positions
+        polymarket_positions = await polymarket_client.get_positions()
+        polymarket_markets = {pos['ticker']: pos['position'] for pos in polymarket_positions.get('market_positions', [])}
         
         # Get database positions marked as live
         import aiosqlite
@@ -171,21 +171,21 @@ async def test_database_sync():
             cursor = await db.execute("SELECT market_id, quantity, side FROM positions WHERE live = 1")
             db_positions = await cursor.fetchall()
         
-        logger.info(f"📊 Kalshi positions: {len(kalshi_markets)} markets")
+        logger.info(f"📊 Polymarket positions: {len(polymarket_markets)} markets")
         logger.info(f"💾 Database positions: {len(db_positions)} positions")
         
         # Check for mismatches
         mismatches = 0
         for market_id, quantity, side in db_positions:
-            kalshi_pos = kalshi_markets.get(market_id, 0)
+            polymarket_pos = polymarket_markets.get(market_id, 0)
             expected_pos = quantity if side == "YES" else -quantity
             
-            if kalshi_pos != expected_pos:
-                logger.warning(f"⚠️ MISMATCH: {market_id} - DB: {expected_pos}, Kalshi: {kalshi_pos}")
+            if polymarket_pos != expected_pos:
+                logger.warning(f"⚠️ MISMATCH: {market_id} - DB: {expected_pos}, Polymarket: {polymarket_pos}")
                 mismatches += 1
         
         if mismatches == 0:
-            logger.info("✅ Database and Kalshi positions are in sync")
+            logger.info("✅ Database and Polymarket positions are in sync")
             return True
         else:
             logger.error(f"❌ Found {mismatches} position mismatches")
@@ -196,7 +196,7 @@ async def test_database_sync():
         return False
     
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
 
 if __name__ == "__main__":
     async def run_all_tests():

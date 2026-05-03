@@ -4,7 +4,7 @@ Test for Issue #9 fix: Order payload sending wrong price fields
 
 This test verifies that the execute_position function correctly constructs
 order parameters with the required price field based on the position side,
-resolving the Kalshi API error: "exactly one of yes_price, no_price, 
+resolving the Polymarket CLOB error: "exactly one of yes_price, no_price, 
 yes_price_dollars, or no_price_dollars should be provided"
 """
 import asyncio
@@ -28,7 +28,7 @@ class TestIssue9PriceFieldFix(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures"""
         self.mock_db_manager = AsyncMock()
-        self.mock_kalshi_client = AsyncMock()
+        self.mock_polymarket_client = AsyncMock()
         
         # Mock market data with typical ask/bid prices
         self.mock_market_data = {
@@ -121,9 +121,9 @@ class TestIssue9PriceFieldFix(unittest.TestCase):
     async def test_execute_position_with_fix(self):
         """Test that execute_position function uses the fix correctly"""
         
-        # Mock the kalshi client to return market data
-        self.mock_kalshi_client.get_market.return_value = self.mock_market_data
-        self.mock_kalshi_client.place_order.return_value = {
+        # Mock the polymarket client to return market data
+        self.mock_polymarket_client.get_market.return_value = self.mock_market_data
+        self.mock_polymarket_client.place_order.return_value = {
             'order': {'order_id': 'test_order_123'}
         }
         
@@ -145,16 +145,16 @@ class TestIssue9PriceFieldFix(unittest.TestCase):
             position=position,
             live_mode=True,
             db_manager=self.mock_db_manager,
-            kalshi_client=self.mock_kalshi_client
+            polymarket_client=self.mock_polymarket_client
         )
         
         # Verify the fix was applied
         self.assertTrue(result, "execute_position should return True")
-        self.mock_kalshi_client.get_market.assert_called_once_with(position.market_id)
-        self.mock_kalshi_client.place_order.assert_called_once()
+        self.mock_polymarket_client.get_market.assert_called_once_with(position.market_id)
+        self.mock_polymarket_client.place_order.assert_called_once()
         
         # Check that place_order was called with correct parameters
-        call_args, call_kwargs = self.mock_kalshi_client.place_order.call_args
+        call_args, call_kwargs = self.mock_polymarket_client.place_order.call_args
         
         # Verify exactly one price field is present
         price_fields = ['yes_price', 'no_price', 'yes_price_dollars', 'no_price_dollars']

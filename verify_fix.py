@@ -77,7 +77,7 @@ def simulate_cli_paper_flag():
     return strategy_live_mode
 
 def main():
-    print("KALSHI AI TRADING BOT - LIVE MODE FIX VERIFICATION")
+    print("POLYMARKET AI TRADING BOT - LIVE MODE FIX VERIFICATION")
     print("Testing end-to-end CLI → BeastModeBot → Strategy flow\n")
     
     # Test live mode

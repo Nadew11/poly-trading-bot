@@ -1,23 +1,24 @@
 """
-Safe Compounder Strategy — Ported from ~/dev/apex/safe_compounder.py
-
-NO-side only, edge-based, capital-efficient.
+Safe Compounder Strategy — NO-side, edge-based, capital-efficient.
 
 STRATEGY:
 - NO side ONLY
 - Find near-certain outcomes (EV ~95-99¢)
-- Edge = estimated_true_prob - lowest_no_ask > 5¢
-- Lowest NO ask must be > 80¢
+- Edge = estimated_true_prob - lowest_no_ask > MIN_EDGE
+- Lowest NO ask must be > MIN_NO_ASK ($0.80)
 - Place resting order at lowest_no_ask - 1¢ (maker trade, near-zero fees)
 - Position size: max 10% of portfolio value per position (Kelly optional)
 
 KEY INSIGHT: We estimate true probability dynamically:
-- YES last price is our primary signal (lower = more certain NO wins)
-- Time to expiry amplifies certainty (if YES is at 3¢ with 2 days left, it's ~99%)
-- We compare our EV estimate to the actual NO ask price
-- Edge = EV - NO ask. Only trade when edge > 5¢.
+- YES last price is the primary signal (lower = more certain NO wins)
+- Time to expiry amplifies certainty (if YES is at 3¢ with 2 days left ≈ 99%)
+- Compare EV estimate to the actual NO ask price; trade only when edge > MIN_EDGE.
 
-Integrated with the repo's KalshiClient and DatabaseManager.
+Polymarket port: market discovery now goes through GammaClient. The original
+Polymarket `KX*` prefix skiplist is replaced by Polymarket tag exclusion (sports,
+awards, music, pop-culture etc.) — same intent, different mechanism. Edge
+math is exchange-agnostic and unchanged.
+
 Available via: python cli.py run --safe-compounder
 """
 
@@ -31,28 +32,26 @@ from typing import Dict, List, Optional, Tuple
 
 import aiosqlite
 
+from src.clients.gamma_client import GammaClient
+
 logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------
 
-# Skip sports/entertainment — too unpredictable for "near-certain" plays
-SKIP_PREFIXES = [
-    "KXNBA", "KXNFL", "KXNHL", "KXMLB", "KXUFC", "KXPGA", "KXATP",
-    "KXEPL", "KXUCL", "KXLIGA", "KXSERIE", "KXBUNDES", "KXLIGUE",
-    "KXWC", "KXMARMAD", "KXMAKEMARMAD", "KXWMARMAD", "KXRT-",
-    "KXPERFORM", "KXACTOR", "KXBOND-", "KXOSCAR", "KXBAFTA", "KXSAG",
-    "KXSNL", "KXSURVIVOR", "KXTRAITORS", "KXDAILY",
-    "KXALBUM", "KXSONG", "KX1SONG", "KX20SONG", "KXTOUR-",
-    "KXFEATURE", "KXGTA", "KXBIG10", "KXBIG12", "KXACC", "KXSEC",
-    "KXAAC", "KXBIGEAST", "KXNCAAM", "KXCOACH", "KXMV",
-    "KXCHESS", "KXBELGIAN", "KXEFL", "KXSUPER", "KXLAMIN",
-    "KXWHATSON", "KXWOWHOCKEY",
-    "KXMENTION", "KXTMENTION", "KXTRUMPMENTION", "KXTRUMPSAY",
-    "KXSPEECH", "KXTSPEECH", "KXADDRESS",
+# Polymarket tag slugs we exclude — too unpredictable for near-certain plays.
+# Maps to Polymarket's tag taxonomy (resolved to numeric IDs by GammaClient).
+SKIP_TAG_SLUGS = [
+    "sports", "soccer", "basketball", "nba", "epl", "ucl", "champions-league",
+    "fifa-world-cup", "f1", "formula1", "nfl", "mlb", "nhl", "ufc", "pga",
+    "tennis", "boxing", "esports",
+    "awards", "oscars", "emmys", "grammys", "music", "pop-culture",
+    "entertainment", "tv", "movies", "gaming", "games",
 ]
 
+# Title-phrase blocklist — markets phrased as "mention", "say in speech" etc.
+# tend to be social-media/entertainment garbage even outside sports tags.
 SKIP_TITLE_PHRASES = [
     "mention", "say in", "speech mention", "address mention",
 ]
@@ -70,9 +69,28 @@ MIN_CONFIDENCE = 0.4
 # Core math
 # -----------------------------------------------------------------------
 
-def should_skip(ticker: str) -> bool:
-    upper = ticker.upper()
-    return any(upper.startswith(p.upper()) for p in SKIP_PREFIXES)
+def should_skip(market: Dict) -> bool:
+    """Polymarket port: skip markets whose parent event tags overlap with
+    SKIP_TAG_SLUGS. Falls back to title-phrase matching when tags are absent.
+
+    `market` is expected to be a Gamma market dict (post-derivation), with
+    `_event_tag_ids` populated by `_derive_market_fields`. The skiplist of
+    numeric IDs is computed once at strategy init and passed in via
+    `market["_skip_tag_ids"]` (if present) — otherwise we fall back to slug
+    membership.
+    """
+    skip_ids = market.get("_skip_tag_ids") or set()
+    if skip_ids:
+        evt_tag_ids = set(market.get("_event_tag_ids") or [])
+        if evt_tag_ids & skip_ids:
+            return True
+
+    # Fallback: also drop markets whose own category slug is in the skiplist.
+    cat = (market.get("_category") or "").lower()
+    if cat and cat in {s.lower() for s in SKIP_TAG_SLUGS}:
+        return True
+
+    return False
 
 
 def estimate_true_no_prob(yes_last: float, hours_to_expiry: float) -> float:
@@ -234,25 +252,35 @@ def market_confidence_score(ticker: str, orderbook: dict, market: dict) -> Tuple
 
 class SafeCompounder:
     """
-    Edge-based NO-side strategy integrated with repo's KalshiClient.
+    Edge-based NO-side strategy. Polymarket edition.
 
     Usage:
-        compounder = SafeCompounder(client=kalshi_client, db_path="trading_system.db")
-        await compounder.run(dry_run=False)
+        async with build_polymarket_clients() as (client, gamma):
+            compounder = SafeCompounder(client=client, gamma=gamma)
+            await compounder.run(dry_run=False)
+
+    `gamma` is required — it owns market discovery (CLOB cannot discover
+    markets on Polymarket). If you instantiate `client` via
+    `build_polymarket_clients()` the gamma client is the same one attached
+    to it, so token-id resolution stays cached across this strategy and
+    any sibling jobs in the same process.
     """
 
     def __init__(
         self,
-        client,  # KalshiClient instance
+        client,  # PolymarketClient instance
+        gamma: Optional[GammaClient] = None,
         db_path: str = "trading_system.db",
         dry_run: bool = True,
-        min_no_ask: int = MIN_NO_ASK,
-        min_edge: int = MIN_EDGE,
+        min_no_ask: float = MIN_NO_ASK,
+        min_edge: float = MIN_EDGE,
         max_position_pct: float = MAX_POSITION_PCT,
         use_kelly: bool = USE_KELLY,
         min_confidence: float = MIN_CONFIDENCE,
     ):
         self.client = client
+        self.gamma = gamma or GammaClient()
+        self._owns_gamma = gamma is None  # close it ourselves if we made it
         self.db_path = db_path
         self.dry_run = dry_run
         self.min_no_ask = min_no_ask
@@ -260,6 +288,8 @@ class SafeCompounder:
         self.max_position_pct = max_position_pct
         self.use_kelly = use_kelly
         self.min_confidence = min_confidence
+        # Resolved at run-time on first use; depends on Gamma being reachable.
+        self._skip_tag_ids: Optional[set] = None
 
     async def run(self, dry_run: Optional[bool] = None) -> Dict:
         """
@@ -280,15 +310,19 @@ class SafeCompounder:
         )
         logger.info("=" * 70)
 
-        # Get portfolio state
+        # Get portfolio state. PolymarketClient.get_balance() reports USDC.e
+        # cash; mark-to-market on open positions is not yet computed (returns 0
+        # for portfolio_value). Fall back to cash balance for sizing so the
+        # strategy still works on a fresh wallet.
         bal = await self.client.get_balance()
-        portfolio = bal.get("portfolio_value", 0)
         cash = bal.get("balance", 0)
+        portfolio = bal.get("portfolio_value", 0) or cash
 
-        print(f"\n💰 Cash: ${cash/100:.2f} | Portfolio: ${portfolio/100:.2f} | "
+        print(f"\n💰 Cash: ${cash/100:.2f} | Portfolio (sizing basis): ${portfolio/100:.2f} | "
               f"Total: ${(cash+portfolio)/100:.2f}\n", flush=True)
 
-        # Step 0: Cancel legacy YES orders
+        # Step 0: Cancel legacy YES orders (no-op on a fresh Polymarket wallet
+        # but kept for parity with the Polymarket version when migrating).
         print("🧹 Step 0: Cancel legacy YES orders...", flush=True)
         cancelled = await self._cancel_yes_orders()
 
@@ -327,6 +361,12 @@ class SafeCompounder:
 
         elapsed = time.time() - start
         bal = await self.client.get_balance()
+        # Lifecycle: close the gamma session if we created it ourselves.
+        if self._owns_gamma:
+            try:
+                await self.gamma.close()
+            except Exception:
+                pass
 
         print(f"\n{'='*70}", flush=True)
         print(f"📊 SAFE COMPOUNDER REPORT", flush=True)
@@ -349,122 +389,107 @@ class SafeCompounder:
         return stats
 
     async def _fetch_all_markets(self) -> List[Dict]:
-        """Fetch all active markets from Kalshi via events API.
-        
-        The /markets endpoint now only returns MVE (parlay) tickers (KXMVE*).
-        Real individual markets live under events, so we fetch events with
-        nested markets to get the actual tradeable universe.
-        Falls back to /markets if events API fails.
+        """Fetch the full active universe from Polymarket Gamma.
+
+        Resolves SKIP_TAG_SLUGS to numeric IDs once and passes them as
+        server-side `exclude_tag_ids` so we never even download the markets
+        we're going to drop. Each returned market dict has been augmented by
+        :func:`gamma_client._derive_market_fields` with `_condition_id`,
+        `_token_ids`, `_outcome_prices`, `_volume_num`, `_end_ts`,
+        `_category`, and `_event_tag_ids` — used downstream for filtering
+        and order placement.
         """
-        all_markets = []
-        seen_tickers = set()
-        
-        # Primary: fetch via events API (gets real individual markets)
-        cursor = None
-        page = 0
-        try:
-            while True:
-                params = {"status": "open", "limit": 100, "with_nested_markets": "true"}
-                if cursor:
-                    params["cursor"] = cursor
-                
-                resp = await self.client._make_authenticated_request(
-                    "GET", "/trade-api/v2/events", params=params
+        if self._skip_tag_ids is None:
+            try:
+                ids = await self.gamma.resolve_tag_slugs(SKIP_TAG_SLUGS)
+                self._skip_tag_ids = set(ids)
+                logger.info(
+                    "SafeCompounder: resolved %d/%d skip-tag slugs",
+                    len(self._skip_tag_ids), len(SKIP_TAG_SLUGS),
                 )
-                events = resp.get("events", [])
-                if not events:
-                    break
-                
-                for event in events:
-                    for m in event.get("markets", []):
-                        ticker = m.get("ticker", "")
-                        if ticker and ticker not in seen_tickers:
-                            seen_tickers.add(ticker)
-                            # Carry event category into market for filtering
-                            m["_event_category"] = event.get("category", "")
-                            m["_event_title"] = event.get("title", "")
-                            all_markets.append(m)
-                
-                cursor = resp.get("cursor")
-                if not cursor:
-                    break
-                
-                page += 1
-                if page > 100:  # Safety cap
-                    break
-                
-                await asyncio.sleep(0.1)
-        except Exception as e:
-            logger.warning("Events API failed, falling back to /markets: %s", e)
-        
-        # Fallback: also fetch /markets for any we missed (includes MVE)
-        if len(all_markets) < 100:
-            logger.info("Few markets from events (%d), also fetching /markets", len(all_markets))
-            cursor = None
-            page = 0
-            while True:
-                try:
-                    params = {"status": "open", "limit": 200}
-                    if cursor:
-                        params["cursor"] = cursor
-                    
-                    resp = await self.client.get_markets(**params)
-                    markets = resp.get("markets", [])
-                    for m in markets:
-                        ticker = m.get("ticker", "")
-                        if ticker and ticker not in seen_tickers:
-                            seen_tickers.add(ticker)
-                            all_markets.append(m)
-                    
-                    cursor = resp.get("cursor")
-                    if not cursor or not markets:
-                        break
-                    
-                    page += 1
-                    if page > 50:
-                        break
-                    
-                    await asyncio.sleep(0.1)
-                except Exception as e:
-                    logger.error("Error fetching markets page %d: %s", page, e)
-                    break
-        
-        logger.info("Fetched %d unique markets (%d from events)", len(all_markets), len(seen_tickers))
-        return all_markets
+            except Exception as exc:
+                logger.warning("Skip-tag resolution failed (%s); will fall back to slug-string match", exc)
+                self._skip_tag_ids = set()
 
-    def _find_no_candidates(self, markets: List[Dict]) -> List[Dict]:
-        """Filter markets to NO-side candidates."""
-        candidates = []
-        now = datetime.now(timezone.utc)
+        markets = await self.gamma.get_markets(
+            active=True,
+            closed=False,
+            archived=False,
+            accepting_orders=True,
+            exclude_tag_ids=list(self._skip_tag_ids) or None,
+            order="volume",
+            ascending=False,
+            max_results=2000,
+        )
 
+        # Last-ditch local filter for tags we couldn't resolve to IDs and for
+        # the title-phrase blocklist. Every kept market also gets its YES/NO
+        # token_ids + routing metadata pushed onto the Polymarket client cache
+        # so subsequent get_orderbook / place_order calls work without a Gamma
+        # re-fetch (and without losing the neg_risk flag).
+        skip_ids = self._skip_tag_ids or set()
+        filtered: List[Dict] = []
         for m in markets:
-            ticker = m.get("ticker", "")
-            if should_skip(ticker):
+            m["_skip_tag_ids"] = skip_ids
+            if should_skip(m):
+                continue
+            title_lower = (m.get("question") or "").lower()
+            if any(p in title_lower for p in SKIP_TITLE_PHRASES):
                 continue
 
-            title_lower = m.get("title", "").lower()
+            cond = m.get("_condition_id") or m.get("conditionId") or ""
+            yes_tok, no_tok = m.get("_token_ids", ("", ""))
+            if cond and yes_tok and no_tok and hasattr(self.client, "register_market"):
+                self.client.register_market(
+                    cond,
+                    yes_tok,
+                    no_tok,
+                    neg_risk=bool(m.get("negRisk", False)),
+                    tick_size=float(m.get("orderPriceMinTickSize", 0.01) or 0.01),
+                )
+
+            filtered.append(m)
+
+        logger.info("Fetched %d markets after server+client filter (from %d raw)",
+                    len(filtered), len(markets))
+        return filtered
+
+    def _find_no_candidates(self, markets: List[Dict]) -> List[Dict]:
+        """Filter markets to NO-side candidates.
+
+        Polymarket markets carry their condition_id in `_condition_id` (or
+        `conditionId` raw). Volume comes from `_volume_num`. End-time is
+        already an epoch second in `_end_ts`. YES last price is the first
+        element of `_outcome_prices` (always [yes, no] for binary markets).
+        """
+        candidates = []
+        now_ts = datetime.now(timezone.utc).timestamp()
+
+        for m in markets:
+            cond = m.get("_condition_id") or m.get("conditionId") or m.get("ticker") or ""
+            if not cond:
+                continue
+            # Tag/title skips already handled in _fetch_all_markets, but be
+            # defensive here in case a caller hands us un-pre-filtered markets.
+            if should_skip(m):
+                continue
+            title_lower = (m.get("question") or "").lower()
             if any(phrase in title_lower for phrase in SKIP_TITLE_PHRASES):
                 continue
 
-            if int(float(m.get("volume_fp", 0) or m.get("volume", 0) or 0)) < MIN_VOLUME:
+            volume = float(
+                m.get("_volume_num") or m.get("volumeNum") or m.get("volume") or 0
+            )
+            if int(volume) < MIN_VOLUME:
                 continue
 
-            yes_last = float(m.get("last_price_dollars", 0) or m.get("last_price", 0) or 0)
-            # Convert old cent format to dollar format if needed
-            if yes_last > 1.0:
-                yes_last = yes_last / 100.0
+            outcome_prices = m.get("_outcome_prices") or (0.0, 0.0)
+            yes_last = float(outcome_prices[0]) if outcome_prices else 0.0
             if yes_last > 0.20:  # Only consider markets with YES ≤ $0.20
                 continue
 
-            close_time = m.get("close_time", "")
-            hours_to_expiry = 720
-            if close_time:
-                try:
-                    expiry = datetime.fromisoformat(close_time.replace("Z", "+00:00"))
-                    hours_to_expiry = max(0, (expiry - now).total_seconds() / 3600)
-                except Exception:
-                    pass
-
+            end_ts = m.get("_end_ts") or 0
+            hours_to_expiry = max(0.0, (end_ts - now_ts) / 3600) if end_ts else 720.0
             if hours_to_expiry <= 0:
                 continue
 
@@ -472,6 +497,9 @@ class SafeCompounder:
 
             candidates.append({
                 **m,
+                # Stable ticker/title aliases for downstream code expecting them
+                "ticker": cond,
+                "title": m.get("question", ""),
                 "_true_no_prob": true_no_prob,
                 "_hours_to_expiry": round(hours_to_expiry, 1),
                 "_days_to_expiry": round(hours_to_expiry / 24, 1),

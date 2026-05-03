@@ -154,7 +154,7 @@ async def main():
     # Check if we're in the right directory
     if not Path("trading_dashboard.py").exists():
         print("❌ Error: trading_dashboard.py not found")
-        print("💡 Make sure you're running this from the kalshi project root")
+        print("💡 Make sure you're running this from the polymarket project root")
         return False
     
     # Check requirements

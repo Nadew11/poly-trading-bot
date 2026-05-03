@@ -36,11 +36,11 @@ async def test_execute_position_places_live_order():
     position_id = await db_manager.add_position(test_position)
     test_position.id = position_id  # Set the ID on the position object
 
-    # Create a mock KalshiClient
+    # Create a mock PolymarketClient
     from unittest.mock import Mock
-    mock_kalshi_client = Mock()
-    mock_kalshi_client.place_order = AsyncMock(return_value={"order": {"order_id": "test-order-123"}})
-    mock_kalshi_client.close = AsyncMock()
+    mock_polymarket_client = Mock()
+    mock_polymarket_client.place_order = AsyncMock(return_value={"order": {"order_id": "test-order-123"}})
+    mock_polymarket_client.close = AsyncMock()
 
     try:
         # Act: Execute the position directly
@@ -48,7 +48,7 @@ async def test_execute_position_places_live_order():
             position=test_position,
             live_mode=True,
             db_manager=db_manager,
-            kalshi_client=mock_kalshi_client
+            polymarket_client=mock_polymarket_client
         )
 
         # Assert: Check that the order was placed and the position updated
@@ -57,8 +57,8 @@ async def test_execute_position_places_live_order():
         updated_position = await db_manager.get_position_by_market_id("LIVE-TEST-1")
 
         # Check that place_order was called
-        mock_kalshi_client.place_order.assert_called_once()
-        call_args = mock_kalshi_client.place_order.call_args
+        mock_polymarket_client.place_order.assert_called_once()
+        call_args = mock_polymarket_client.place_order.call_args
         assert call_args.kwargs['ticker'] == "LIVE-TEST-1"
         assert call_args.kwargs['side'] == "yes"
         assert call_args.kwargs['count'] == 10
@@ -76,12 +76,12 @@ async def test_execute_position_places_live_order():
 
 async def test_sell_limit_order_functionality():
     """
-    Test the sell limit order functionality with real Kalshi API.
+    Test the sell limit order functionality with real Polymarket CLOB.
     This test checks that we can place sell limit orders for existing positions.
     """
     from src.jobs.execute import place_sell_limit_order
     from src.utils.database import DatabaseManager, Position
-    from src.clients.kalshi_client import KalshiClient
+    from src.clients.polymarket_client import PolymarketClient
     from tests.test_helpers import find_suitable_test_market
     from datetime import datetime
     import os
@@ -94,7 +94,7 @@ async def test_sell_limit_order_functionality():
     db_manager = DatabaseManager(db_path=test_db)
     await db_manager.initialize()
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     
     try:
         # Get a suitable test market efficiently (no excessive API calls)
@@ -125,7 +125,7 @@ async def test_sell_limit_order_functionality():
             test_position,
             limit_price=0.70,  # Sell at 70¢ (10¢ profit)
             db_manager=db_manager,
-            kalshi_client=kalshi_client
+            polymarket_client=polymarket_client
         )
         
         # The test passes if the function runs without errors
@@ -133,7 +133,7 @@ async def test_sell_limit_order_functionality():
         print(f"Sell limit order result: {success}")
         
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
         if os.path.exists(test_db):
             os.remove(test_db)
 
@@ -144,7 +144,7 @@ async def test_profit_taking_orders():
     """
     from src.jobs.execute import place_profit_taking_orders
     from src.utils.database import DatabaseManager
-    from src.clients.kalshi_client import KalshiClient
+    from src.clients.polymarket_client import PolymarketClient
     import os
     
     # Setup test database
@@ -155,13 +155,13 @@ async def test_profit_taking_orders():
     db_manager = DatabaseManager(db_path=test_db)
     await db_manager.initialize()
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     
     try:
         # Test profit-taking logic with real portfolio
         results = await place_profit_taking_orders(
             db_manager=db_manager,
-            kalshi_client=kalshi_client,
+            polymarket_client=polymarket_client,
             profit_threshold=0.15  # 15% profit threshold for testing
         )
         
@@ -178,6 +178,6 @@ async def test_profit_taking_orders():
         
     finally:
         # Cleanup
-        await kalshi_client.close()
+        await polymarket_client.close()
         if os.path.exists(test_db):
             os.remove(test_db) 

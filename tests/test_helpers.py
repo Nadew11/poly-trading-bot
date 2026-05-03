@@ -4,7 +4,7 @@ Test helpers to reduce API calls and improve test efficiency.
 
 import asyncio
 from typing import List, Optional, Dict, Any
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.database import Market
 import pytest
 
@@ -26,17 +26,17 @@ async def get_test_markets(limit: int = 10) -> List[Dict[str, Any]]:
     
     async with _CACHE_LOCK:
         if _MARKETS_CACHE is None:
-            kalshi_client = KalshiClient()
+            polymarket_client = PolymarketClient()
             try:
                 # Fetch only a small number of markets for testing
-                markets_response = await kalshi_client.get_markets(limit=limit)
+                markets_response = await polymarket_client.get_markets(limit=limit)
                 _MARKETS_CACHE = markets_response.get('markets', [])[:limit]
                 print(f"✅ Cached {len(_MARKETS_CACHE)} markets for testing")
             except Exception as e:
                 print(f"❌ Failed to fetch test markets: {e}")
                 _MARKETS_CACHE = []
             finally:
-                await kalshi_client.close()
+                await polymarket_client.close()
     
     return _MARKETS_CACHE
 
@@ -80,15 +80,15 @@ async def get_test_market_data(market_id: str) -> Optional[Dict[str, Any]]:
     Returns:
         Market data dictionary or None if not found
     """
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     try:
-        market_response = await kalshi_client.get_market(market_id)
+        market_response = await polymarket_client.get_market(market_id)
         return market_response.get('market') if market_response else None
     except Exception as e:
         print(f"❌ Failed to fetch market {market_id}: {e}")
         return None
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
 
 def clear_markets_cache():
     """Clear the markets cache for fresh data."""

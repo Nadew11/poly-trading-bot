@@ -3,7 +3,7 @@
 Tests for Issue #42 fix: price sanity checks for collection/aggregate tickers.
 
 Collection tickers (e.g. KXMVECROSSCATEGORY-*, KXMVESPORTSMULTIGAMEEXTENDED-*)
-are not directly tradeable on Kalshi.  The API returns yes_ask == no_ask == $1.00
+are not directly tradeable on Polymarket.  The API returns yes_ask == no_ask == $1.00
 for these markets.  Placing an order against them yields HTTP 400 invalid_price.
 
 Fixes:
@@ -117,14 +117,14 @@ def _make_position(market_id: str = "TEST-MARKET", side: str = "YES") -> Positio
 
 
 def _mock_clients(market_prices: dict):
-    """Return (db_manager_mock, kalshi_client_mock) wired with the given market data."""
+    """Return (db_manager_mock, polymarket_client_mock) wired with the given market data."""
     db_mock = AsyncMock()
     db_mock.update_position_to_live = AsyncMock(return_value=None)
 
-    kalshi_mock = Mock()
-    kalshi_mock.get_market = AsyncMock(return_value={"market": market_prices})
-    kalshi_mock.place_order = AsyncMock(return_value={"order": {"order_id": "ord-test-42"}})
-    return db_mock, kalshi_mock
+    polymarket_mock = Mock()
+    polymarket_mock.get_market = AsyncMock(return_value={"market": market_prices})
+    polymarket_mock.place_order = AsyncMock(return_value={"order": {"order_id": "ord-test-42"}})
+    return db_mock, polymarket_mock
 
 
 async def test_execute_skips_collection_ticker_yes_side():
@@ -137,18 +137,18 @@ async def test_execute_skips_collection_ticker_yes_side():
         "no_bid_dollars": 0.0,
         "no_ask_dollars": 1.0,
     }
-    db_mock, kalshi_mock = _mock_clients(collection_market)
+    db_mock, polymarket_mock = _mock_clients(collection_market)
     position = _make_position(side="YES")
 
     result = await execute_position(
         position=position,
         live_mode=True,
         db_manager=db_mock,
-        kalshi_client=kalshi_mock,
+        polymarket_client=polymarket_mock,
     )
 
     assert result is False, "Should return False for collection ticker"
-    kalshi_mock.place_order.assert_not_called()
+    polymarket_mock.place_order.assert_not_called()
 
 
 async def test_execute_skips_collection_ticker_no_side():
@@ -161,18 +161,18 @@ async def test_execute_skips_collection_ticker_no_side():
         "no_bid_dollars": 0.0,
         "no_ask_dollars": 1.0,
     }
-    db_mock, kalshi_mock = _mock_clients(collection_market)
+    db_mock, polymarket_mock = _mock_clients(collection_market)
     position = _make_position(side="NO")
 
     result = await execute_position(
         position=position,
         live_mode=True,
         db_manager=db_mock,
-        kalshi_client=kalshi_mock,
+        polymarket_client=polymarket_mock,
     )
 
     assert result is False, "Should return False for NO-side collection ticker"
-    kalshi_mock.place_order.assert_not_called()
+    polymarket_mock.place_order.assert_not_called()
 
 
 async def test_execute_skips_zero_price():
@@ -185,18 +185,18 @@ async def test_execute_skips_zero_price():
         "no_bid_dollars": 0.0,
         "no_ask_dollars": 0.50,
     }
-    db_mock, kalshi_mock = _mock_clients(zero_market)
+    db_mock, polymarket_mock = _mock_clients(zero_market)
     position = _make_position(side="YES")
 
     result = await execute_position(
         position=position,
         live_mode=True,
         db_manager=db_mock,
-        kalshi_client=kalshi_mock,
+        polymarket_client=polymarket_mock,
     )
 
     assert result is False, "Should return False when ask_cents == 0"
-    kalshi_mock.place_order.assert_not_called()
+    polymarket_mock.place_order.assert_not_called()
 
 
 async def test_execute_skips_100_cent_price():
@@ -211,18 +211,18 @@ async def test_execute_skips_100_cent_price():
         "no_bid_dollars": 0.0,
         "no_ask_dollars": 0.50,     # normal — so is_tradeable_market passes
     }
-    db_mock, kalshi_mock = _mock_clients(boundary_market)
+    db_mock, polymarket_mock = _mock_clients(boundary_market)
     position = _make_position(side="YES")
 
     result = await execute_position(
         position=position,
         live_mode=True,
         db_manager=db_mock,
-        kalshi_client=kalshi_mock,
+        polymarket_client=polymarket_mock,
     )
 
     assert result is False, "Should return False when yes_ask_cents >= 100"
-    kalshi_mock.place_order.assert_not_called()
+    polymarket_mock.place_order.assert_not_called()
 
 
 async def test_execute_allows_normal_market():
@@ -235,15 +235,15 @@ async def test_execute_allows_normal_market():
         "no_bid_dollars": 0.46,
         "no_ask_dollars": 0.50,
     }
-    db_mock, kalshi_mock = _mock_clients(normal_market)
+    db_mock, polymarket_mock = _mock_clients(normal_market)
     position = _make_position(side="YES")
 
     result = await execute_position(
         position=position,
         live_mode=True,
         db_manager=db_mock,
-        kalshi_client=kalshi_mock,
+        polymarket_client=polymarket_mock,
     )
 
     assert result is True, "Should succeed for a normal tradeable market"
-    kalshi_mock.place_order.assert_called_once()
+    polymarket_mock.place_order.assert_called_once()

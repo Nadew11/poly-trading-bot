@@ -1,5 +1,5 @@
 """
-AI-powered sentiment analysis for the Kalshi trading system.
+AI-powered sentiment analysis for the Polymarket trading system.
 Uses OpenRouter (via the openai library) with a fast/cheap model to score
 news article sentiment relative to prediction market questions.
 """

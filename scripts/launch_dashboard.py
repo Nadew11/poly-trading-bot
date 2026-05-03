@@ -54,7 +54,7 @@ def launch_dashboard():
         dashboard_path = Path("trading_dashboard.py")
     if not dashboard_path.exists():
         print("❌ Error: trading_dashboard.py not found")
-        print("💡 Make sure you're running this from the kalshi project root")
+        print("💡 Make sure you're running this from the polymarket project root")
         return False
     
     # Check requirements

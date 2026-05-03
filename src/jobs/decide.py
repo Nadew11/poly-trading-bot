@@ -19,7 +19,7 @@ from src.utils.database import DatabaseManager, Market, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
 from src.clients.xai_client import XAIClient
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 
 
 def _calculate_dynamic_quantity(
@@ -68,7 +68,7 @@ async def make_decision_for_market(
     market: Market,
     db_manager: DatabaseManager,
     xai_client: XAIClient,
-    kalshi_client: KalshiClient,
+    polymarket_client: PolymarketClient,
 ) -> Optional[Position]:
     """
     Analyzes a single market and makes a trading decision with performance optimizations.
@@ -112,7 +112,7 @@ async def make_decision_for_market(
             return None
 
         # Get real-time portfolio balance
-        balance_response = await kalshi_client.get_balance()
+        balance_response = await polymarket_client.get_balance()
         available_balance = balance_response.get("balance", 0) / 100  # Convert cents to dollars
         portfolio_data = {"available_balance": available_balance}
         
@@ -202,7 +202,7 @@ async def make_decision_for_market(
         )
         
         # Cost-optimized market data fetching
-        full_market_data_response = await kalshi_client.get_market(market.market_id)
+        full_market_data_response = await polymarket_client.get_market(market.market_id)
         full_market_data = full_market_data_response.get("market", {})
         rules = full_market_data.get("rules", "No rules available.")
         
@@ -332,7 +332,7 @@ async def make_decision_for_market(
             
             # Check if position can be added within limits and adjust if needed
             can_add_position, limit_reason = await check_can_add_position(
-                initial_position_value, db_manager, kalshi_client
+                initial_position_value, db_manager, polymarket_client
             )
             
             if not can_add_position:
@@ -348,7 +348,7 @@ async def make_decision_for_market(
                         break  # Can't have less than 1 contract
                     
                     can_add_reduced, reduced_reason = await check_can_add_position(
-                        reduced_position_value, db_manager, kalshi_client
+                        reduced_position_value, db_manager, polymarket_client
                     )
                     
                     if can_add_reduced:
@@ -359,7 +359,7 @@ async def make_decision_for_market(
                 else:
                     # If even the smallest size doesn't fit, check if it's due to position count
                     from src.utils.position_limits import PositionLimitsManager
-                    limits_manager = PositionLimitsManager(db_manager, kalshi_client)
+                    limits_manager = PositionLimitsManager(db_manager, polymarket_client)
                     current_positions = await limits_manager._get_position_count()
                     
                     if current_positions >= limits_manager.max_positions:
@@ -382,7 +382,7 @@ async def make_decision_for_market(
             
             trade_value = initial_quantity * price
             can_trade_cash, cash_reason = await check_can_trade_with_cash_reserves(
-                trade_value, db_manager, kalshi_client
+                trade_value, db_manager, polymarket_client
             )
             
             if not can_trade_cash:

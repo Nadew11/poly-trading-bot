@@ -1,7 +1,7 @@
 """
 Market price normalization utilities.
 
-Kalshi API v2 changed price fields from cent-based integers
+Polymarket CLOB v2 changed price fields from cent-based integers
 (yes_ask, yes_bid, no_ask, no_bid) to dollar-based floats
 (yes_ask_dollars, yes_bid_dollars, no_ask_dollars, no_bid_dollars).
 
@@ -12,7 +12,7 @@ collection/aggregate tickers (issue #42).
 from typing import Dict, Any, Tuple
 
 # Threshold above which both sides signal a collection/aggregate ticker
-# that is not directly tradeable on Kalshi (e.g. KXMVECROSSCATEGORY-*).
+# that is not directly tradeable on Polymarket (e.g. KXMVECROSSCATEGORY-*).
 _COLLECTION_TICKER_THRESHOLD = 0.99
 
 
@@ -21,7 +21,7 @@ def is_tradeable_market(market_info: Dict[str, Any]) -> bool:
     Return False if this market looks like a collection/aggregate ticker.
 
     Collection tickers (e.g. KXMVECROSSCATEGORY-*, KXMVESPORTSMULTIGAMEEXTENDED-*)
-    are not directly tradeable.  The Kalshi API returns yes_ask == no_ask == $1.00
+    are not directly tradeable.  The Polymarket CLOB returns yes_ask == no_ask == $1.00
     for these markets.  Attempting to place an order against them results in an
     HTTP 400 ``invalid_price`` error.
 
@@ -29,7 +29,7 @@ def is_tradeable_market(market_info: Dict[str, Any]) -> bool:
     the collection-ticker threshold (``>= 0.99``).
 
     Args:
-        market_info: Raw market dict from the Kalshi API.
+        market_info: Raw market dict from the Polymarket CLOB.
 
     Returns:
         True  – market is tradeable.
@@ -43,7 +43,7 @@ def is_tradeable_market(market_info: Dict[str, Any]) -> bool:
 
 def get_market_prices(market_info: Dict[str, Any]) -> Tuple[float, float, float, float]:
     """
-    Extract and normalize market prices from a Kalshi API market object.
+    Extract and normalize market prices from a Polymarket CLOB market object.
 
     Supports both:
       - API v2: yes_bid_dollars / yes_ask_dollars / no_bid_dollars / no_ask_dollars

@@ -18,22 +18,22 @@ from typing import Dict, List
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.database import DatabaseManager
 
 
 async def get_portfolio_health() -> Dict:
     """Get comprehensive portfolio health metrics."""
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     
     try:
         # Get available cash
-        balance_response = await kalshi_client.get_balance()
+        balance_response = await polymarket_client.get_balance()
         available_cash = balance_response.get('balance', 0) / 100
         
         # Get current positions
-        positions_response = await kalshi_client.get_positions()
+        positions_response = await polymarket_client.get_positions()
         market_positions = positions_response.get('market_positions', [])
         
         total_position_value = 0
@@ -46,7 +46,7 @@ async def get_portfolio_health() -> Dict:
             
             if ticker and position_count != 0:
                 try:
-                    market_data = await kalshi_client.get_market(ticker)
+                    market_data = await polymarket_client.get_market(ticker)
                     if market_data and 'market' in market_data:
                         market_info = market_data['market']
                         
@@ -88,7 +88,7 @@ async def get_portfolio_health() -> Dict:
         }
         
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
 
 
 def print_portfolio_summary(health: Dict):

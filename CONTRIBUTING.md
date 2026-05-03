@@ -1,6 +1,6 @@
-# Contributing to Kalshi AI Trading Bot
+# Contributing to Polymarket AI Trading Bot
 
-Thank you for your interest in contributing to the Kalshi AI Trading Bot! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to the Polymarket AI Trading Bot! This document provides guidelines and information for contributors.
 
 ## 🤝 How to Contribute
 
@@ -28,15 +28,15 @@ We welcome various types of contributions:
 
 - Python 3.12+
 - Git
-- Kalshi API account (for testing)
+- Polymarket CLOB account (for testing)
 - xAI API key (for AI features)
 
 ### Local Development Setup
 
 1. **Clone your fork**
    ```bash
-   git clone https://github.com/yourusername/kalshi-ai-trading-bot.git
-   cd kalshi-ai-trading-bot
+   git clone https://github.com/yourusername/polymarket-ai-trading-bot.git
+   cd polymarket-ai-trading-bot
    ```
 
 2. **Set up virtual environment**
@@ -350,4 +350,4 @@ Contributors will be recognized in:
 
 ---
 
-Thank you for contributing to the Kalshi AI Trading Bot! Your contributions help make this project better for everyone. 
+Thank you for contributing to the Polymarket AI Trading Bot! Your contributions help make this project better for everyone. 

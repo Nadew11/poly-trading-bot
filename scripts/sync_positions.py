@@ -2,11 +2,11 @@
 """
 Position Sync Tool
 
-This script syncs your current Kalshi positions into the database
+This script syncs your current Polymarket positions into the database
 so the dashboard shows accurate data.
 
 It will:
-1. Get current positions from Kalshi
+1. Get current positions from Polymarket
 2. Mark old database positions as closed  
 3. Add current positions to database
 4. Update the dashboard data source
@@ -21,7 +21,7 @@ from typing import List, Dict
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.database import DatabaseManager, Position, TradeLog
 from src.utils.logging_setup import get_trading_logger
 from src.utils.market_prices import get_market_prices
@@ -30,21 +30,21 @@ logger = get_trading_logger(__name__)
 
 
 async def sync_positions_to_database():
-    """Sync current Kalshi positions to database."""
+    """Sync current Polymarket positions to database."""
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     db_manager = DatabaseManager()
     
     try:
         await db_manager.initialize()
         
-        print("🔄 Syncing positions from Kalshi to database...")
+        print("🔄 Syncing positions from Polymarket to database...")
         
-        # Get current Kalshi positions
-        positions_response = await kalshi_client.get_positions()
+        # Get current Polymarket positions
+        positions_response = await polymarket_client.get_positions()
         market_positions = positions_response.get('market_positions', [])
         
-        print(f"📊 Found {len(market_positions)} positions on Kalshi")
+        print(f"📊 Found {len(market_positions)} positions on Polymarket")
         
         # Get current database positions
         db_positions = await db_manager.get_open_positions()
@@ -59,18 +59,18 @@ async def sync_positions_to_database():
             await db.commit()
             print(f"   ✅ Deleted all old positions from database")
         
-        # Add current Kalshi positions to database
+        # Add current Polymarket positions to database
         active_positions = 0
         total_value = 0
         
-        for kalshi_pos in market_positions:
-            ticker = kalshi_pos.get('ticker')
-            position_count = kalshi_pos.get('position', 0)
+        for polymarket_pos in market_positions:
+            ticker = polymarket_pos.get('ticker')
+            position_count = polymarket_pos.get('position', 0)
             
             if ticker and position_count != 0:
                 try:
                     # Get market data for pricing
-                    market_data = await kalshi_client.get_market(ticker)
+                    market_data = await polymarket_client.get_market(ticker)
                     if market_data and 'market' in market_data:
                         market_info = market_data['market']
                         
@@ -90,7 +90,7 @@ async def sync_positions_to_database():
                             entry_price=current_price,  # Use current price as entry
                             quantity=abs(position_count),
                             timestamp=datetime.now(),
-                            rationale="Synced from Kalshi",
+                            rationale="Synced from Polymarket",
                             confidence=0.5,  # Default confidence
                             live=True,
                             status='open',
@@ -123,7 +123,7 @@ async def sync_positions_to_database():
         return False
         
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
         await db_manager.close()
 
 
@@ -162,24 +162,24 @@ async def verify_sync():
     
     print("\n🔍 Verifying sync results...")
     
-    kalshi_client = KalshiClient()
+    polymarket_client = PolymarketClient()
     db_manager = DatabaseManager()
     
     try:
         await db_manager.initialize()
         
-        # Get Kalshi positions
-        positions_response = await kalshi_client.get_positions()
-        kalshi_positions = positions_response.get('market_positions', [])
-        kalshi_active = len([p for p in kalshi_positions if p.get('position', 0) != 0])
+        # Get Polymarket positions
+        positions_response = await polymarket_client.get_positions()
+        polymarket_positions = positions_response.get('market_positions', [])
+        polymarket_active = len([p for p in polymarket_positions if p.get('position', 0) != 0])
         
         # Get database positions
         db_positions = await db_manager.get_open_positions()
         
-        print(f"📊 Kalshi active positions: {kalshi_active}")
+        print(f"📊 Polymarket active positions: {polymarket_active}")
         print(f"💾 Database open positions: {len(db_positions)}")
         
-        if kalshi_active == len(db_positions):
+        if polymarket_active == len(db_positions):
             print("✅ Sync successful - counts match!")
         else:
             print("⚠️ Counts don't match - may need to run sync again")
@@ -188,7 +188,7 @@ async def verify_sync():
         print(f"❌ Error verifying sync: {e}")
         
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
         await db_manager.close()
 
 
@@ -197,7 +197,7 @@ async def main():
     
     print("🔄 Position Database Sync Tool")
     print("=" * 50)
-    print("This will sync your current Kalshi positions into the database")
+    print("This will sync your current Polymarket positions into the database")
     print("so the dashboard shows accurate trade counts and P&L data.")
     print()
     

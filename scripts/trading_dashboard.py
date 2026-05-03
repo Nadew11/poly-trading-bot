@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Comprehensive Trading System Dashboard
+Polymarket Trading System Dashboard
 
-A Streamlit-based dashboard for monitoring and analyzing all aspects of the 
-trading system including:
+A Streamlit-based dashboard for monitoring and analyzing all aspects of the
+Polymarket trading system including:
 - Strategy performance analytics
 - LLM query analysis and review
-- Real-time position tracking
+- Real-time position tracking (USDC.e on Polygon, Polymarket CLOB)
 - Risk management monitoring
 - System health metrics
 - P&L analytics by strategy
@@ -27,11 +27,11 @@ import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.utils.database import DatabaseManager
-from src.clients.kalshi_client import KalshiClient
+from src.clients import build_polymarket_clients
 
 # Configure Streamlit page
 st.set_page_config(
-    page_title="Trading System Dashboard",
+    page_title="Polymarket Trading Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -74,76 +74,64 @@ st.markdown("""
 
 # @st.cache_data(ttl=60)  # Cache for 1 minute - temporarily disabled
 def load_performance_data():
-    """Load performance data from database."""
+    """Load performance data from DB + live positions from Polymarket CLOB."""
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         db_manager = DatabaseManager()
-        kalshi_client = KalshiClient()
-        
+
         async def get_data():
             await db_manager.initialize()
-            
-            # Get performance by strategy - ensure it's serializable
+
+            # Strategy performance from local DB
             performance_raw = await db_manager.get_performance_by_strategy()
-            
-            # Convert performance data to ensure serializability
             performance = {}
             if performance_raw:
                 for strategy, stats in performance_raw.items():
                     performance[str(strategy)] = {
-                        str(k): float(v) if isinstance(v, (int, float)) else str(v) 
+                        str(k): float(v) if isinstance(v, (int, float)) else str(v)
                         for k, v in stats.items()
                     }
-            
-            # Get LIVE positions from Kalshi API (not just database)
-            positions_response = await kalshi_client.get_positions()
-            kalshi_positions = positions_response.get('market_positions', [])
-            
-            # Convert Kalshi positions to simple dictionaries for caching
+
+            # Live positions from Polymarket — already include current_price
+            # and avg_price from the CLOB data API (no per-market round-trips).
             positions = []
-            for pos in kalshi_positions:
-                if pos.get('position', 0) != 0:  # Only active positions
-                    ticker = pos.get('ticker')
-                    position_count = pos.get('position', 0)
-                    
-                    # Create a simple dictionary with only serializable types
-                    position_dict = {
-                        'market_id': str(ticker),
-                        'side': 'YES' if position_count > 0 else 'NO',
-                        'quantity': int(abs(position_count)),
-                        'entry_price': 0.50,  # Will be updated below
-                        'timestamp': datetime.now().isoformat(),
-                        'strategy': 'live_sync',
-                        'status': 'open',
-                        'stop_loss_price': None,
-                        'take_profit_price': None
-                    }
-                    
-                    # Try to get current market price for better accuracy
-                    try:
-                        market_data = await kalshi_client.get_market(ticker)
-                        if market_data and 'market' in market_data:
-                            market_info = market_data['market']
-                            if position_count > 0:  # YES position
-                                position_dict['entry_price'] = float((market_info.get('yes_bid', 0) + market_info.get('yes_ask', 100)) / 2 / 100)
-                            else:  # NO position
-                                position_dict['entry_price'] = float((market_info.get('no_bid', 0) + market_info.get('no_ask', 100)) / 2 / 100)
-                    except:
-                        position_dict['entry_price'] = 0.50  # Keep default price as float
-                    
-                    positions.append(position_dict)
-            
+            async with build_polymarket_clients() as (client, _gamma):
+                try:
+                    positions_response = await client.get_positions()
+                except Exception as exc:
+                    st.warning(f"Could not fetch Polymarket positions: {exc}")
+                    positions_response = {"market_positions": []}
+
+                for pos in positions_response.get("market_positions", []):
+                    size = float(pos.get("size", 0) or 0)
+                    if size <= 0:
+                        continue
+                    cond = pos.get("condition_id") or pos.get("ticker") or ""
+                    positions.append({
+                        "market_id":   str(cond),
+                        "condition_id": str(cond),
+                        "token_id":    str(pos.get("token_id", "")),
+                        "side":        pos.get("side", "YES"),
+                        "quantity":    int(size),
+                        "entry_price": float(pos.get("avg_price", 0) or 0),
+                        "current_price": float(pos.get("current_price", 0) or 0),
+                        "realized_pnl": float(pos.get("realized_pnl_dollars", 0) or 0),
+                        "timestamp":   datetime.now().isoformat(),
+                        "strategy":    "live_sync",
+                        "status":      "open",
+                        "stop_loss_price":   None,
+                        "take_profit_price": None,
+                    })
+
             await db_manager.close()
-            
             return performance, positions
-        
+
         performance, positions = loop.run_until_complete(get_data())
         loop.close()
-        
         return performance, positions
-        
+
     except Exception as e:
         st.error(f"Error loading performance data: {e}")
         return {}, []
@@ -196,104 +184,97 @@ def load_llm_data():
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def load_system_health():
-    """Load system health metrics including both available cash and total portfolio value."""
+    """Load USDC.e cash + Polymarket position MTM. Wallet address included so the
+    operator can sanity-check which Polygon wallet the dashboard is reading."""
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
-        kalshi_client = KalshiClient()
-        
+
         async def get_health():
-            # Get available cash
-            balance_response = await kalshi_client.get_balance()
-            available_cash = balance_response.get('balance', 0) / 100
-            
-            # Get current positions to calculate total portfolio value
-            positions_response = await kalshi_client.get_positions()
-            market_positions = positions_response.get('market_positions', [])
-            
-            total_position_value = 0
-            positions_count = len(market_positions)
-            
-            # Calculate current value of all positions
-            for position in market_positions:
-                try:
-                    ticker = position.get('ticker')
-                    position_count = position.get('position', 0)
-                    
-                    if ticker and position_count != 0:
-                        # Get current market data
-                        market_data = await kalshi_client.get_market(ticker)
-                        if market_data and 'market' in market_data:
-                            market_info = market_data['market']
-                            
-                            # Determine if this is a YES or NO position and get current price
-                            # For Kalshi, positive position = YES, negative = NO
-                            if position_count > 0:  # YES position
-                                current_price = (market_info.get('yes_bid', 0) + market_info.get('yes_ask', 100)) / 2 / 100
-                            else:  # NO position  
-                                current_price = (market_info.get('no_bid', 0) + market_info.get('no_ask', 100)) / 2 / 100
-                            
-                            position_value = abs(position_count) * current_price
-                            total_position_value += position_value
-                            
-                except Exception as e:
-                    # If we can't get market data for a position, skip it
-                    print(f"Warning: Could not value position {ticker}: {e}")
-                    continue
-            
-            # Total portfolio value = cash + position values
-            total_portfolio_value = available_cash + total_position_value
-            
-            return available_cash, total_portfolio_value, positions_count, total_position_value
-        
-        available_cash, total_portfolio_value, positions_count, position_value = loop.run_until_complete(get_health())
+            async with build_polymarket_clients() as (client, _gamma):
+                balance_response = await client.get_balance()
+                available_cash = float(balance_response.get("balance_dollars", 0))
+                wallet_address = balance_response.get("address", "?")
+
+                positions_response = await client.get_positions()
+                market_positions = positions_response.get("market_positions", [])
+
+                # MTM = sum(size × current_price) — Polymarket's data API gives
+                # `current_price` per position natively, so no per-market loop.
+                total_position_value = 0.0
+                positions_count = 0
+                for pos in market_positions:
+                    size = float(pos.get("size", 0) or 0)
+                    if size <= 0:
+                        continue
+                    positions_count += 1
+                    cur = float(pos.get("current_price", 0) or 0)
+                    total_position_value += size * cur
+
+                total_portfolio_value = available_cash + total_position_value
+                return (
+                    available_cash,
+                    total_portfolio_value,
+                    positions_count,
+                    total_position_value,
+                    wallet_address,
+                )
+
+        (
+            available_cash,
+            total_portfolio_value,
+            positions_count,
+            position_value,
+            wallet_address,
+        ) = loop.run_until_complete(get_health())
         loop.close()
-        
+
         return {
-            'available_cash': available_cash,
-            'total_portfolio_value': total_portfolio_value, 
-            'positions_count': positions_count,
-            'position_value': position_value
+            "available_cash":         available_cash,
+            "total_portfolio_value":  total_portfolio_value,
+            "positions_count":        positions_count,
+            "position_value":         position_value,
+            "wallet_address":         wallet_address,
         }
-        
+
     except Exception as e:
         st.error(f"Error loading system health: {e}")
         return {
-            'available_cash': 0.0,
-            'total_portfolio_value': 0.0,
-            'positions_count': 0,
-            'position_value': 0.0
+            "available_cash":        0.0,
+            "total_portfolio_value": 0.0,
+            "positions_count":       0,
+            "position_value":        0.0,
+            "wallet_address":        "?",
         }
 
 def main():
     """Main dashboard function."""
-    
-    st.title("🚀 Trading System Dashboard")
-    st.markdown("**Real-time monitoring and analysis of your automated trading system**")
-    
+
+    st.title("🚀 Polymarket Trading System Dashboard")
+    st.markdown("**Real-time monitoring and analysis of your Polymarket trading system**")
+
     # Add refresh button to clear cache
     col1, col2 = st.columns([4, 1])
     with col2:
         if st.button("🔄 Refresh Data", help="Clear cache and reload all data"):
             st.cache_data.clear()
             st.rerun()
-    
+
     # Sidebar for navigation
     st.sidebar.title("📊 Dashboard")
-    
+
     page = st.sidebar.selectbox(
         "Select View",
         [
             "📈 Overview",
-            "🎯 Strategy Performance", 
+            "🎯 Strategy Performance",
             "🤖 LLM Analysis",
             "💼 Positions & Trades",
             "⚠️ Risk Management",
             "🔧 System Health"
         ]
     )
-    
+
     # Load data with error handling
     try:
         performance_data, positions = load_performance_data()
@@ -303,13 +284,26 @@ def main():
         st.error(f"Error loading dashboard data: {e}")
         st.info("Please check your system connections and try refreshing.")
         return
-    
-    # Show data status in sidebar
+
+    # Show wallet + data status in sidebar
+    wallet = system_health_data.get("wallet_address", "?")
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**🔑 Polygon Wallet (funder):**")
+    if wallet and wallet != "?":
+        st.sidebar.code(wallet, language="text")
+        st.sidebar.caption(
+            f"[View on PolygonScan](https://polygonscan.com/address/{wallet})",
+            unsafe_allow_html=False,
+        )
+    else:
+        st.sidebar.warning("Wallet address unavailable — check POLYMARKET_PRIVATE_KEY in .env")
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("**📊 Data Status:**")
     st.sidebar.metric("Active Positions", len(positions) if positions else 0)
     st.sidebar.metric("LLM Queries (24h)", len(llm_queries) if llm_queries else 0)
-    st.sidebar.metric("Portfolio Balance", f"${system_health_data.get('total_portfolio_value', 0):.2f}")
+    st.sidebar.metric("USDC.e Balance", f"${system_health_data.get('available_cash', 0):.2f}")
+    st.sidebar.metric("Portfolio MTM", f"${system_health_data.get('total_portfolio_value', 0):.2f}")
     
     # Page routing
     if page == "📈 Overview":
@@ -997,8 +991,8 @@ def show_system_health(available_cash, positions_count, llm_stats):
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.success("✅ **Kalshi Connection**: Active")
-        st.write(f"Available Cash: ${available_cash:.2f}")
+        st.success("✅ **Polymarket Connection**: Active")
+        st.write(f"Available USDC.e: ${available_cash:.2f}")
         st.write(f"Positions: {positions_count}")
     
     with col2:

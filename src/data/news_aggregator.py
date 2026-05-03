@@ -1,5 +1,5 @@
 """
-Multi-source news aggregator for the Kalshi trading system.
+Multi-source news aggregator for the Polymarket trading system.
 Fetches articles from configured RSS feeds, deduplicates them, and provides
 relevance-scored article retrieval for market sentiment analysis.
 """

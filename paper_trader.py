@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Paper Trader — Signal-only mode for the Kalshi AI Trading Bot.
+Paper Trader — Signal-only mode for the Polymarket AI Trading Bot.
 
 Uses the same market scanning and AI analysis as the live bot, but instead of
 placing real orders it logs every signal to SQLite.  A companion HTML dashboard
@@ -45,7 +45,7 @@ async def scan_and_log():
     Scan markets via the existing ingest pipeline, run ensemble decisions,
     and log any actionable signals to the paper-trading database.
     """
-    from src.clients.kalshi_client import KalshiClient
+    from src.clients.polymarket_client import PolymarketClient
     from src.clients.xai_client import XAIClient
     from src.utils.database import DatabaseManager
     from src.jobs.ingest import run_ingestion
@@ -53,7 +53,7 @@ async def scan_and_log():
 
     logger.info("📡 Scanning markets for paper trading signals…")
 
-    kalshi = KalshiClient()
+    polymarket = PolymarketClient()
     db = DatabaseManager()
     await db.initialize()  # Ensure all tables exist before any DB operations
     xai = XAIClient(db_manager=db)
@@ -85,7 +85,7 @@ async def scan_and_log():
 
             decision = await make_decision_for_market(
                 market_data=market,
-                kalshi_client=kalshi,
+                polymarket_client=polymarket,
                 xai_client=xai,
                 db_manager=db,
             )
@@ -134,20 +134,20 @@ async def scan_and_log():
 # ---------------------------------------------------------------------------
 
 async def check_settlements():
-    """Check Kalshi for settled markets and update signal outcomes."""
-    from src.clients.kalshi_client import KalshiClient
+    """Check Polymarket for settled markets and update signal outcomes."""
+    from src.clients.polymarket_client import PolymarketClient
 
     pending = get_pending_signals()
     if not pending:
         logger.info("No pending signals to settle.")
         return 0
 
-    kalshi = KalshiClient()
+    polymarket = PolymarketClient()
     settled_count = 0
 
     for sig in pending:
         try:
-            market = await kalshi.get_market(sig["market_id"])
+            market = await polymarket.get_market(sig["market_id"])
             if not market:
                 continue
 
@@ -197,7 +197,7 @@ def print_stats():
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Paper Trader — Kalshi AI signal logger")
+    parser = argparse.ArgumentParser(description="Paper Trader — Polymarket AI signal logger")
     parser.add_argument("--settle", action="store_true", help="Check settled markets")
     parser.add_argument("--dashboard", action="store_true", help="Regenerate HTML dashboard only")
     parser.add_argument("--stats", action="store_true", help="Print stats to terminal")

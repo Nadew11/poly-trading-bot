@@ -3,15 +3,15 @@
 import asyncio
 import sys
 sys.path.append('.')
-from src.clients.kalshi_client import KalshiClient
+from src.clients.polymarket_client import PolymarketClient
 from src.utils.database import DatabaseManager
 
 async def get_positions():
-    # Get Kalshi positions
-    kalshi_client = KalshiClient()
+    # Get Polymarket positions
+    polymarket_client = PolymarketClient()
     try:
-        positions_response = await kalshi_client.get_positions()
-        print('=== KALSHI POSITIONS ===')
+        positions_response = await polymarket_client.get_positions()
+        print('=== POLYMARKET POSITIONS ===')
         market_positions = positions_response.get('market_positions', [])
         print(f'Total positions: {len(market_positions)}')
         for pos in market_positions:
@@ -37,7 +37,7 @@ async def get_positions():
             print(f'{pos[0]}: {pos[1]} {pos[2]} @ ${pos[3]:.2f} (status: {pos[4]})')
             
     finally:
-        await kalshi_client.close()
+        await polymarket_client.close()
 
 if __name__ == "__main__":
     asyncio.run(get_positions())

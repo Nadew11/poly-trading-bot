@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cost Monitor - Real-time AI spending tracker for Kalshi Trading System
+Cost Monitor - Real-time AI spending tracker for Polymarket Trading System
 
 Usage:
     python cost_monitor.py           # Show today's costs
@@ -125,7 +125,7 @@ async def live_monitor(db_manager: DatabaseManager):
         print("\n👋 Monitoring stopped")
 
 async def main():
-    parser = argparse.ArgumentParser(description="Monitor AI costs for Kalshi Trading System")
+    parser = argparse.ArgumentParser(description="Monitor AI costs for Polymarket Trading System")
     parser.add_argument("--week", action="store_true", help="Show weekly summary")
     parser.add_argument("--live", action="store_true", help="Live monitoring mode")
     args = parser.parse_args()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database initialization script for Kalshi AI Trading Bot
+Database initialization script for Polymarket AI Trading Bot
 Creates the necessary database tables and schema
 """
 
@@ -43,7 +43,7 @@ async def init_database():
 
 def main():
     """Main function."""
-    print("🚀 Kalshi AI Trading Bot - Database Initialization")
+    print("🚀 Polymarket AI Trading Bot - Database Initialization")
     print("=" * 50)
     
     # Check if .env file exists
