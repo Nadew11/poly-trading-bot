@@ -250,6 +250,9 @@ class PositionLimitsManager:
         baked in, so we don't need a per-market orderbook fetch like the legacy
         Polymarket flow did.
         """
+        sim = settings.synthetic_paper_usdc_balance()
+        if sim is not None:
+            return sim
         try:
             balance_response = await self.polymarket_client.get_balance()
             available_cash = float(balance_response.get('balance_dollars', 0))
@@ -282,6 +285,9 @@ class PositionLimitsManager:
     
     async def _get_available_cash(self) -> float:
         """Get available USDC.e balance for the funding wallet."""
+        sim = settings.synthetic_paper_usdc_balance()
+        if sim is not None:
+            return sim
         try:
             balance_response = await self.polymarket_client.get_balance()
             return float(balance_response.get('balance_dollars', 0))

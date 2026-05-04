@@ -17,6 +17,8 @@ Usage:
     python beast_mode_bot.py --live       # Live trading mode
     python beast_mode_bot.py --dashboard  # Live dashboard mode
 
+    streamlit run streamlit_dashboard.py --server.address 127.0.0.1  # Web UI
+
 Recommended: use cli.py for the unified CLI interface.
     python cli.py run                     # AI directional (default)
     python cli.py run --safe-compounder   # Conservative math-only mode

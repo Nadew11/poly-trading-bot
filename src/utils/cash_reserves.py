@@ -280,6 +280,9 @@ class CashReservesManager:
     
     async def _get_portfolio_value(self) -> float:
         """Calculate total portfolio value (USDC cash + MTM on open positions)."""
+        sim = settings.synthetic_paper_usdc_balance()
+        if sim is not None:
+            return sim
         try:
             balance_response = await self.polymarket_client.get_balance()
             available_cash = float(balance_response.get('balance_dollars', 0))
@@ -309,6 +312,9 @@ class CashReservesManager:
 
     async def _get_available_cash(self) -> float:
         """Get available USDC.e balance for the funding wallet."""
+        sim = settings.synthetic_paper_usdc_balance()
+        if sim is not None:
+            return sim
         try:
             balance_response = await self.polymarket_client.get_balance()
             return float(balance_response.get('balance_dollars', 0))

@@ -71,3 +71,6 @@ black==23.12.1
 isort==5.13.2
 uvicorn
 json-repair
+
+# Interactive web dashboard (localhost monitoring)
+streamlit==1.41.1

@@ -4,12 +4,16 @@ Manages trading parameters, API configurations, and risk management settings.
 """
 
 import os
+import re
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Polymarket / Ethereum EOA private key: 0x + 64 hex chars
+_POLYGON_PRIVATE_KEY_HEX = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
 
 @dataclass
@@ -120,6 +124,11 @@ class TradingConfig:
     # Live trading mode control
     live_trading_enabled: bool = field(default_factory=lambda: os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true")
     paper_trading_mode: bool = field(default_factory=lambda: os.getenv("LIVE_TRADING_ENABLED", "false").lower() != "true")
+    # When paper_trading_mode and no POLYMARKET_PRIVATE_KEY, risk code uses this notional USDC
+    # so cash-reserve math does not treat "unknown wallet" as a cash emergency.
+    paper_simulated_usdc_balance: float = field(
+        default_factory=lambda: float(os.getenv("PAPER_SIMULATED_USDC", "10000"))
+    )
     
     # Trading frequency - MORE FREQUENT
     market_scan_interval: int = 30          # DECREASED: Scan every 30 seconds (was 60)
@@ -268,6 +277,15 @@ class Settings:
     ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     sentiment: SentimentConfig = field(default_factory=SentimentConfig)
 
+    def synthetic_paper_usdc_balance(self) -> Optional[float]:
+        """Notional USDC for paper mode when no wallet key is configured."""
+        if not self.trading.paper_trading_mode:
+            return None
+        key = (self.api.polymarket_private_key or "").strip()
+        if key and _POLYGON_PRIVATE_KEY_HEX.fullmatch(key):
+            return None
+        return float(self.trading.paper_simulated_usdc_balance)
+
     def validate(self) -> bool:
         """Validate configuration settings.
 
@@ -276,7 +294,9 @@ class Settings:
         without .env so that `python cli.py health` itself can run and report
         what's missing.
         """
-        if not self.api.polymarket_private_key:
+        key = (self.api.polymarket_private_key or "").strip()
+        key_ok = bool(key and _POLYGON_PRIVATE_KEY_HEX.fullmatch(key))
+        if not key_ok and self.synthetic_paper_usdc_balance() is None:
             raise ValueError(
                 "POLYMARKET_PRIVATE_KEY environment variable is required "
                 "(see env.template; copy to .env and fill in your Polygon "

@@ -46,6 +46,30 @@ class Position:
     target_confidence_change: Optional[float] = None  # Exit if confidence drops by this amount
 
 @dataclass
+class OpenPositionWithMarket:
+    """Open position row joined to `markets` for dashboard display."""
+    market_id: str
+    side: str
+    entry_price: float
+    quantity: int
+    timestamp: datetime
+    market_title: str
+    id: Optional[int] = None
+    rationale: Optional[str] = None
+    confidence: Optional[float] = None
+    live: bool = False
+    status: str = "open"
+    strategy: Optional[str] = None
+    stop_loss_price: Optional[float] = None
+    take_profit_price: Optional[float] = None
+    max_hold_hours: Optional[int] = None
+    target_confidence_change: Optional[float] = None
+    market_category: Optional[str] = None
+    yes_price: Optional[float] = None
+    no_price: Optional[float] = None
+
+
+@dataclass
 class TradeLog:
     """Represents a closed trade for logging and analysis."""
     market_id: str
@@ -994,33 +1018,59 @@ class DatabaseManager(TradingLoggerMixin):
     async def get_open_positions(self) -> List[Position]:
         """Get all open positions."""
         async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 "SELECT * FROM positions WHERE status = 'open'"
             )
             rows = await cursor.fetchall()
-            
-            positions = []
+            positions: List[Position] = []
             for row in rows:
-                # Convert database row to Position object
-                position = Position(
-                    market_id=row[1],
-                    side=row[2],
-                    entry_price=row[3],
-                    quantity=row[4],
-                    timestamp=datetime.fromisoformat(row[5]),
-                    rationale=row[6],
-                    confidence=row[7],
-                    live=bool(row[8]),
-                    status=row[9],
-                    id=row[0],
-                    stop_loss_price=row[10],
-                    take_profit_price=row[11],
-                    max_hold_hours=row[12],
-                    target_confidence_change=row[13]
-                )
-                positions.append(position)
-            
+                d = dict(row)
+                d["timestamp"] = datetime.fromisoformat(d["timestamp"])
+                d["live"] = bool(d.get("live", 0))
+                positions.append(Position(**d))
             return positions
+
+    async def get_open_positions_with_market_titles(self) -> List[OpenPositionWithMarket]:
+        """Open positions with market title/category from `markets` (LEFT JOIN)."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT
+                    p.id AS id,
+                    p.market_id AS market_id,
+                    p.side AS side,
+                    p.entry_price AS entry_price,
+                    p.quantity AS quantity,
+                    p.timestamp AS timestamp,
+                    p.rationale AS rationale,
+                    p.confidence AS confidence,
+                    p.live AS live,
+                    p.status AS status,
+                    p.strategy AS strategy,
+                    p.stop_loss_price AS stop_loss_price,
+                    p.take_profit_price AS take_profit_price,
+                    p.max_hold_hours AS max_hold_hours,
+                    p.target_confidence_change AS target_confidence_change,
+                    COALESCE(m.title, p.market_id) AS market_title,
+                    m.category AS market_category,
+                    m.yes_price AS yes_price,
+                    m.no_price AS no_price
+                FROM positions p
+                LEFT JOIN markets m ON m.market_id = p.market_id
+                WHERE p.status = 'open'
+                ORDER BY p.timestamp DESC
+                """
+            )
+            rows = await cursor.fetchall()
+            out: List[OpenPositionWithMarket] = []
+            for row in rows:
+                d = dict(row)
+                d["timestamp"] = datetime.fromisoformat(d["timestamp"])
+                d["live"] = bool(d.get("live", 0))
+                out.append(OpenPositionWithMarket(**d))
+            return out
 
 if __name__ == "__main__":
     import asyncio

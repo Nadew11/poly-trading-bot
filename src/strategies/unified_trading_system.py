@@ -184,7 +184,8 @@ class UnifiedAdvancedTradingSystem:
 
         except Exception as e:
             self.logger.error(f"Failed to get portfolio value, using default: {e}")
-            self.total_capital = 100  # Conservative fallback
+            sim = settings.synthetic_paper_usdc_balance()
+            self.total_capital = sim if sim is not None else 100  # Paper: notional USDC if no wallet key
 
         # Update capital allocation based on actual balance
         self.market_making_capital = self.total_capital * self.config.market_making_allocation
